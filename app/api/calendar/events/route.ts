@@ -4,6 +4,7 @@ import {
   refreshGoogleToken,
   fetchGoogleCalendarEvents,
   type GoogleCalendarEvent,
+  type GoogleCalendar,
 } from "@/lib/google-calendar";
 import { getProjects } from "@/lib/db/projects";
 import { getAllTasks } from "@/lib/db/tasks";
@@ -21,6 +22,7 @@ export interface PrdcrEvent {
 
 export interface CalendarEventsResponse {
   googleEvents: GoogleCalendarEvent[];
+  googleCalendars: GoogleCalendar[];
   projectDeadlines: PrdcrEvent[];
   taskDeadlines: PrdcrEvent[];
   connected: boolean;
@@ -39,6 +41,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<CalendarEvents
   // ── Google Calendar events ──────────────────────────────────────────
   const refreshToken = await getSetting("google_refresh_token");
   let googleEvents: GoogleCalendarEvent[] = [];
+  let googleCalendars: GoogleCalendar[] = [];
   let googleError: string | undefined;
 
   if (refreshToken) {
@@ -57,7 +60,9 @@ export async function GET(req: NextRequest): Promise<NextResponse<CalendarEvents
         );
       }
 
-      googleEvents = await fetchGoogleCalendarEvents(accessToken, timeMin, timeMax);
+      const result = await fetchGoogleCalendarEvents(accessToken, timeMin, timeMax);
+      googleEvents = result.events;
+      googleCalendars = result.calendars;
     } catch (err) {
       console.error("Google Calendar error:", err);
       googleError = "Failed to fetch Google Calendar events";
@@ -93,6 +98,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<CalendarEvents
 
   return NextResponse.json({
     googleEvents,
+    googleCalendars,
     projectDeadlines,
     taskDeadlines,
     connected: !!refreshToken,

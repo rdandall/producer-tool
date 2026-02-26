@@ -7,10 +7,12 @@ import {
   CalendarDays,
   Loader2,
   ExternalLink,
+  Unlink,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import type { GoogleCalendarEvent, } from "@/lib/google-calendar";
+import type { GoogleCalendarEvent, GoogleCalendar } from "@/lib/google-calendar";
 import type { PrdcrEvent } from "@/app/api/calendar/events/route";
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -28,10 +30,13 @@ interface DayEvent {
   type: "google" | "project" | "task";
   href?: string;
   timeLabel?: string;
+  calendarName?: string;
+  priority?: string | null;
 }
 
 interface CalendarData {
   googleEvents: GoogleCalendarEvent[];
+  googleCalendars: GoogleCalendar[];
   projectDeadlines: PrdcrEvent[];
   taskDeadlines: PrdcrEvent[];
   connected: boolean;
@@ -58,7 +63,6 @@ function buildGridDays(year: number, month: number): (Date | null)[] {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const grid: (Date | null)[] = Array(firstDay).fill(null);
   for (let d = 1; d <= daysInMonth; d++) grid.push(new Date(year, month, d));
-  // Pad to complete last row
   while (grid.length % 7 !== 0) grid.push(null);
   return grid;
 }
@@ -73,6 +77,8 @@ export function CalendarClient() {
   const [selected, setSelected] = useState<string>(todayStr);
   const [data, setData] = useState<CalendarData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
 
   // Strip ?connected=true from URL after redirect
   useEffect(() => {
@@ -95,6 +101,17 @@ export function CalendarClient() {
   }, []);
 
   useEffect(() => { fetchEvents(year, month); }, [year, month, fetchEvents]);
+
+  async function handleDisconnect() {
+    setDisconnecting(true);
+    try {
+      await fetch("/api/auth/google/disconnect", { method: "POST" });
+      setConfirmDisconnect(false);
+      await fetchEvents(year, month);
+    } finally {
+      setDisconnecting(false);
+    }
+  }
 
   // Month navigation
   function prevMonth() {
@@ -119,6 +136,7 @@ export function CalendarClient() {
         color: ev.calendarColor,
         type: "google",
         timeLabel: formatTime(ev.start),
+        calendarName: ev.calendarName,
       });
     }
     for (const ev of data.projectDeadlines) {
@@ -129,7 +147,7 @@ export function CalendarClient() {
     for (const ev of data.taskDeadlines) {
       const d = getEventDate(ev.start);
       eventsByDate[d] ??= [];
-      eventsByDate[d].push({ id: ev.id, summary: ev.summary, color: ev.color, type: "task" });
+      eventsByDate[d].push({ id: ev.id, summary: ev.summary, color: ev.color, type: "task", priority: ev.priority });
     }
   }
 
@@ -143,9 +161,30 @@ export function CalendarClient() {
     return d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
   })();
 
+  // Build dynamic legend from actual data in the current view
+  const calendarIdsWithEvents = data?.connected
+    ? new Set(data.googleEvents.map((ev) => ev.calendarId))
+    : new Set<string>();
+
+  const activeGoogleCalendars = (data?.googleCalendars ?? []).filter(
+    (c) => calendarIdsWithEvents.has(c.id)
+  );
+
+  // Unique project colors+names from project deadlines in view
+  const projectsInView = (() => {
+    const seen = new Map<string, { name: string; color: string }>();
+    for (const ev of data?.projectDeadlines ?? []) {
+      const key = ev.color;
+      if (!seen.has(key)) seen.set(key, { name: ev.summary.replace(/ deadline$/, ""), color: ev.color });
+    }
+    return [...seen.values()];
+  })();
+
+  const hasTasksInView = (data?.taskDeadlines ?? []).length > 0;
+
   return (
     <div className="flex-1 overflow-auto">
-      <div className="max-w-5xl mx-auto px-8 py-8">
+      <div className="max-w-7xl mx-auto px-8 py-8">
 
         {/* ── Page header ──────────────────────────────────── */}
         <div className="flex items-start justify-between mb-8">
@@ -156,51 +195,83 @@ export function CalendarClient() {
             </p>
           </div>
 
-          {data && !data.connected && (
-            <a
-              href="/api/auth/google"
-              className="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-foreground text-background hover:bg-foreground/85 transition-colors"
-            >
-              <CalendarDays className="w-4 h-4" />
-              Connect Google Calendar
-            </a>
-          )}
-          {data?.connected && (
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-              Google Calendar synced
-            </div>
-          )}
+          <div className="flex items-center gap-3">
+            {data && !data.connected && (
+              <a
+                href="/api/auth/google"
+                className="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-foreground text-background hover:bg-foreground/85 transition-colors"
+              >
+                <CalendarDays className="w-4 h-4" />
+                Connect Google Calendar
+              </a>
+            )}
+
+            {data?.connected && !confirmDisconnect && (
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                  Google Calendar synced
+                </div>
+                <button
+                  onClick={() => setConfirmDisconnect(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-muted-foreground border border-border/50 hover:border-destructive/50 hover:text-destructive transition-colors"
+                >
+                  <Unlink className="w-3 h-3" />
+                  Disconnect
+                </button>
+              </div>
+            )}
+
+            {confirmDisconnect && (
+              <div className="flex items-center gap-2 px-3 py-1.5 border border-destructive/30 bg-destructive/5">
+                <span className="text-xs text-foreground/70">Disconnect Google Calendar?</span>
+                <button
+                  onClick={() => setConfirmDisconnect(false)}
+                  className="px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground border border-border/40 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDisconnect}
+                  disabled={disconnecting}
+                  className="flex items-center gap-1.5 px-2 py-0.5 text-xs font-semibold text-destructive border border-destructive/40 hover:bg-destructive hover:text-destructive-foreground transition-colors disabled:opacity-50"
+                >
+                  {disconnecting ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
+                  Yes, disconnect
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* ── Main layout: calendar + day panel ────────────── */}
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-5">
+        {/* ── Main layout: calendar + side panel ────────────── */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-5">
 
-          {/* Calendar grid */}
+          {/* ── Calendar grid ─────────────────────────────────── */}
           <div className="border border-border overflow-hidden">
 
             {/* Month navigation bar */}
-            <div className="flex items-center justify-between px-5 py-3.5 border-b border-border">
-              <h2 className="text-sm font-bold tracking-tight">
-                {MONTH_NAMES[month]} {year}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <h2 className="text-base font-bold tracking-tight">
+                {MONTH_NAMES[month]} <span className="text-muted-foreground/50 font-normal">{year}</span>
               </h2>
               <div className="flex items-center gap-0.5">
                 <button
                   onClick={prevMonth}
-                  className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors"
+                  className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors"
                   aria-label="Previous month"
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </button>
                 <button
                   onClick={goToday}
-                  className="px-2.5 h-7 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors"
+                  className="px-3 h-8 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors"
                 >
                   Today
                 </button>
                 <button
                   onClick={nextMonth}
-                  className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors"
+                  className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors"
                   aria-label="Next month"
                 >
                   <ChevronRight className="w-4 h-4" />
@@ -209,10 +280,10 @@ export function CalendarClient() {
             </div>
 
             {/* Day-of-week headers */}
-            <div className="grid grid-cols-7 border-b border-border">
+            <div className="grid grid-cols-7 border-b border-border bg-accent/5">
               {DAYS_SHORT.map((d) => (
-                <div key={d} className="py-2 text-center">
-                  <span className="text-[10px] uppercase tracking-[0.1em] font-semibold text-muted-foreground/40">
+                <div key={d} className="py-2.5 text-center">
+                  <span className="text-[10px] uppercase tracking-[0.12em] font-bold text-muted-foreground/40">
                     {d}
                   </span>
                 </div>
@@ -221,7 +292,7 @@ export function CalendarClient() {
 
             {/* Day cells */}
             {loading ? (
-              <div className="flex items-center justify-center py-20">
+              <div className="flex items-center justify-center py-32">
                 <Loader2 className="w-5 h-5 animate-spin text-muted-foreground/30" />
               </div>
             ) : (
@@ -235,7 +306,7 @@ export function CalendarClient() {
                       <div
                         key={`empty-${i}`}
                         className={cn(
-                          "min-h-[88px] bg-accent/5",
+                          "min-h-[130px] bg-accent/[0.03]",
                           !isLastCol && "border-r border-border/30",
                           !isLastRow && "border-b border-border/30"
                         )}
@@ -247,34 +318,43 @@ export function CalendarClient() {
                   const isToday = dateStr === todayStr;
                   const isSelected = dateStr === selected;
                   const dayEvents = eventsByDate[dateStr] ?? [];
-                  const visible = dayEvents.slice(0, 2);
+                  const visible = dayEvents.slice(0, 3);
                   const overflow = dayEvents.length - visible.length;
+                  const isWeekend = day.getDay() === 0 || day.getDay() === 6;
 
                   return (
                     <button
                       key={dateStr}
                       onClick={() => setSelected(dateStr)}
                       className={cn(
-                        "min-h-[88px] p-1.5 text-left transition-colors focus:outline-none",
+                        "min-h-[130px] p-2 text-left transition-colors focus:outline-none group",
                         !isLastCol && "border-r border-border/30",
                         !isLastRow && "border-b border-border/30",
-                        isSelected ? "bg-accent/25" : "hover:bg-accent/10"
+                        isWeekend && !isSelected && "bg-accent/[0.04]",
+                        isSelected ? "bg-accent/20 ring-1 ring-inset ring-border/50" : "hover:bg-accent/10"
                       )}
                     >
                       {/* Date number */}
-                      <div className="mb-1">
+                      <div className="mb-1.5 flex items-start justify-between">
                         <span
                           className={cn(
-                            "inline-flex w-6 h-6 items-center justify-center text-[11px] font-semibold",
+                            "inline-flex w-7 h-7 items-center justify-center text-[11px] font-bold",
                             isToday
                               ? "bg-foreground text-background rounded-full"
                               : isSelected
                                 ? "text-foreground"
-                                : "text-muted-foreground/50"
+                                : isWeekend
+                                  ? "text-muted-foreground/35"
+                                  : "text-muted-foreground/55"
                           )}
                         >
                           {day.getDate()}
                         </span>
+                        {dayEvents.length > 0 && !isSelected && (
+                          <span className="text-[9px] text-muted-foreground/25 font-medium tabular-nums mt-1 group-hover:text-muted-foreground/40 transition-colors">
+                            {dayEvents.length}
+                          </span>
+                        )}
                       </div>
 
                       {/* Event chips */}
@@ -282,23 +362,23 @@ export function CalendarClient() {
                         {visible.map((ev) => (
                           <div
                             key={ev.id}
-                            className="flex items-center gap-1 px-1 py-0.5 rounded-sm"
-                            style={{ backgroundColor: `${ev.color}18` }}
+                            className="flex items-center gap-1.5 px-1.5 py-[3px] rounded-[3px]"
+                            style={{ backgroundColor: `${ev.color}15` }}
                           >
                             <div
-                              className="w-1.5 h-1.5 rounded-full shrink-0"
+                              className="w-[5px] h-[5px] rounded-full shrink-0"
                               style={{ backgroundColor: ev.color }}
                             />
                             <span
                               className="text-[10px] font-medium truncate leading-none"
                               style={{ color: ev.color }}
                             >
-                              {ev.timeLabel ? `${ev.timeLabel} ` : ""}{ev.summary}
+                              {ev.timeLabel ? `${ev.timeLabel} · ` : ""}{ev.summary}
                             </span>
                           </div>
                         ))}
                         {overflow > 0 && (
-                          <span className="text-[10px] text-muted-foreground/40 pl-1">
+                          <span className="text-[10px] text-muted-foreground/35 pl-1.5 font-medium">
                             +{overflow} more
                           </span>
                         )}
@@ -310,47 +390,59 @@ export function CalendarClient() {
             )}
           </div>
 
-          {/* ── Day detail panel ─────────────────────────── */}
-          <div className="border border-border overflow-hidden">
-            <div className="px-4 py-3.5 border-b border-border">
-              <p className="text-[10px] uppercase tracking-[0.12em] font-semibold text-muted-foreground/50">
+          {/* ── Side panel ────────────────────────────────────── */}
+          <div className="flex flex-col border border-border overflow-hidden">
+
+            {/* Day detail header */}
+            <div className="px-5 py-4 border-b border-border bg-accent/5">
+              <p className="text-[10px] uppercase tracking-[0.14em] font-bold text-muted-foreground/40 mb-0.5">
                 {selectedLabel}
+              </p>
+              <p className="text-xs text-muted-foreground/50">
+                {selectedEvents.length === 0
+                  ? "Nothing scheduled"
+                  : `${selectedEvents.length} event${selectedEvents.length !== 1 ? "s" : ""}`}
               </p>
             </div>
 
-            <div className="p-3 space-y-1.5 overflow-y-auto max-h-[520px]">
+            {/* Events list */}
+            <div className="flex-1 p-3 space-y-1.5 overflow-y-auto">
               {selectedEvents.length === 0 ? (
-                <p className="text-xs text-muted-foreground/30 text-center py-10">
-                  Nothing scheduled
-                </p>
+                <div className="flex flex-col items-center justify-center py-12 gap-2">
+                  <CalendarDays className="w-6 h-6 text-muted-foreground/15" />
+                  <p className="text-[11px] text-muted-foreground/30 text-center">
+                    All clear
+                  </p>
+                </div>
               ) : (
                 selectedEvents.map((ev) => (
                   <div
                     key={ev.id}
                     className="px-3 py-2.5 rounded-sm"
-                    style={{ borderLeft: `2px solid ${ev.color}`, backgroundColor: `${ev.color}0d` }}
+                    style={{ borderLeft: `2.5px solid ${ev.color}`, backgroundColor: `${ev.color}0a` }}
                   >
                     {ev.href ? (
-                      <Link
-                        href={ev.href}
-                        className="flex items-start gap-1.5 group"
-                      >
+                      <Link href={ev.href} className="flex items-start gap-1.5 group">
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-foreground group-hover:text-primary transition-colors leading-snug">
+                          <p className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors leading-snug">
                             {ev.summary}
                           </p>
-                          <p className="text-[10px] text-muted-foreground/50 mt-0.5 capitalize">
-                            {ev.type === "project" ? "Project deadline" : ev.type === "task" ? "Task due" : "Calendar event"}
+                          <p className="text-[10px] text-muted-foreground/50 mt-0.5">
+                            {ev.type === "project" ? "Project deadline" : "Task due"}
                             {ev.timeLabel && <> · {ev.timeLabel}</>}
                           </p>
                         </div>
-                        <ExternalLink className="w-3 h-3 mt-0.5 shrink-0 text-muted-foreground/30 group-hover:text-primary/50 transition-colors" />
+                        <ExternalLink className="w-3 h-3 mt-0.5 shrink-0 text-muted-foreground/25 group-hover:text-primary/50 transition-colors" />
                       </Link>
                     ) : (
                       <div>
-                        <p className="text-sm font-medium text-foreground leading-snug">{ev.summary}</p>
-                        <p className="text-[10px] text-muted-foreground/50 mt-0.5 capitalize">
-                          {ev.type === "google" ? "Google Calendar" : ev.type === "task" ? "Task due" : "Deadline"}
+                        <p className="text-sm font-semibold text-foreground leading-snug">{ev.summary}</p>
+                        <p className="text-[10px] text-muted-foreground/50 mt-0.5">
+                          {ev.type === "google"
+                            ? ev.calendarName ?? "Google Calendar"
+                            : ev.type === "task"
+                              ? `Task due${ev.priority ? ` · ${ev.priority}` : ""}`
+                              : "Deadline"}
                           {ev.timeLabel && <> · {ev.timeLabel}</>}
                         </p>
                       </div>
@@ -360,22 +452,59 @@ export function CalendarClient() {
               )}
             </div>
 
-            {/* Legend */}
+            {/* ── Legend ──────────────────────────────────────── */}
             {data && (
-              <div className="px-4 py-3 border-t border-border/50 space-y-1.5">
-                <p className="text-[9px] uppercase tracking-[0.1em] font-semibold text-muted-foreground/30 mb-2">Legend</p>
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-[#4285f4]" />
-                  <span className="text-[10px] text-muted-foreground/50">Google Calendar</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-amber-500" />
-                  <span className="text-[10px] text-muted-foreground/50">Project deadline</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-muted-foreground/40" />
-                  <span className="text-[10px] text-muted-foreground/50">Task due date</span>
-                </div>
+              <div className="px-5 py-4 border-t border-border/50 space-y-3">
+                {/* Google Calendars section */}
+                {data.connected && (
+                  <div className="space-y-1.5">
+                    <p className="text-[9px] uppercase tracking-[0.12em] font-bold text-muted-foreground/30">
+                      Google Calendars
+                    </p>
+                    {activeGoogleCalendars.length === 0 ? (
+                      <p className="text-[10px] text-muted-foreground/30 italic">No events this month</p>
+                    ) : (
+                      activeGoogleCalendars.map((cal) => (
+                        <div key={cal.id} className="flex items-center gap-2">
+                          <div
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={{ backgroundColor: cal.color }}
+                          />
+                          <span className="text-[10px] text-muted-foreground/60 truncate">{cal.name}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {/* PRDCR section */}
+                {(projectsInView.length > 0 || hasTasksInView) && (
+                  <div className="space-y-1.5">
+                    <p className="text-[9px] uppercase tracking-[0.12em] font-bold text-muted-foreground/30">
+                      PRDCR
+                    </p>
+                    {projectsInView.map((p) => (
+                      <div key={p.color + p.name} className="flex items-center gap-2">
+                        <div
+                          className="w-2 h-2 rounded-[2px] shrink-0"
+                          style={{ backgroundColor: p.color }}
+                        />
+                        <span className="text-[10px] text-muted-foreground/60 truncate">{p.name}</span>
+                      </div>
+                    ))}
+                    {hasTasksInView && (
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full shrink-0 bg-muted-foreground/30" />
+                        <span className="text-[10px] text-muted-foreground/60">Task due dates</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Nothing in legend when not connected and no PRDCR events */}
+                {!data.connected && projectsInView.length === 0 && !hasTasksInView && (
+                  <p className="text-[10px] text-muted-foreground/25 italic">No events this month</p>
+                )}
               </div>
             )}
           </div>
