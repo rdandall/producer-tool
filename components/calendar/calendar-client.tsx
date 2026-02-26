@@ -278,6 +278,14 @@ export function CalendarClient() {
     return days;
   }, [eventsByDate]);
 
+  // ── Print schedule dates (all days with events in viewed month) ──
+  const printScheduleDates = useMemo(() => {
+    const prefix = `${year}-${String(month + 1).padStart(2, "0")}`;
+    return Object.keys(eventsByDate)
+      .filter(d => d.startsWith(prefix) && eventsByDate[d].length > 0)
+      .sort();
+  }, [eventsByDate, year, month]);
+
   // ── Conflict detection ───────────────────────────────────────────
   const conflictWeeks = useMemo(() => {
     const weekMap: Record<string, PrdcrEvent[]> = {};
@@ -409,13 +417,13 @@ export function CalendarClient() {
       {/* Print styles */}
       <style>{`
         @media print {
-          [data-sidebar] { display: none !important; }
-          [data-calendar-side-panel] { display: none !important; }
-          .no-print { display: none !important; }
-          [data-calendar-main] { max-width: 100% !important; padding: 16px !important; }
-          [data-calendar-grid] { grid-template-columns: 1fr !important; }
-          @page { margin: 1.5cm; }
+          [data-sidebar], .no-print { display: none !important; }
+          [data-calendar-main] { display: none !important; }
+          .print-schedule { display: block !important; }
+          @page { margin: 2cm 2.5cm; size: A4; }
+          body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         }
+        .print-schedule { display: none; }
       `}</style>
 
       <div className="flex-1 overflow-auto" data-calendar-main>
@@ -849,6 +857,88 @@ export function CalendarClient() {
               )}
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* ── Print-only schedule ───────────────────────────── */}
+      <div className="print-schedule" style={{ fontFamily: "system-ui, -apple-system, sans-serif", color: "#111", lineHeight: 1.5 }}>
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", borderBottom: "2px solid #111", paddingBottom: "16px", marginBottom: "32px" }}>
+          <div>
+            <div style={{ fontSize: "11px", letterSpacing: "0.15em", textTransform: "uppercase", fontWeight: 700, color: "#666", marginBottom: "4px" }}>PRDCR</div>
+            <div style={{ fontSize: "28px", fontWeight: 900, letterSpacing: "-0.02em" }}>
+              {MONTH_NAMES[month]} {year} — Production Schedule
+            </div>
+          </div>
+          <div style={{ textAlign: "right", fontSize: "11px", color: "#888" }}>
+            <div>Generated {new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</div>
+            {data?.connected && <div style={{ marginTop: "2px" }}>Includes Google Calendar</div>}
+          </div>
+        </div>
+
+        {/* No events */}
+        {printScheduleDates.length === 0 && (
+          <div style={{ textAlign: "center", padding: "60px 0", color: "#999", fontSize: "14px" }}>
+            No events scheduled for {MONTH_NAMES[month]} {year}
+          </div>
+        )}
+
+        {/* Days */}
+        {printScheduleDates.map((dateStr, di) => {
+          const d = new Date(dateStr + "T12:00:00");
+          const isToday = dateStr === todayStr;
+          const events = eventsByDate[dateStr] ?? [];
+          const dayName = d.toLocaleDateString("en-US", { weekday: "long" }).toUpperCase();
+          const dayDate = d.toLocaleDateString("en-US", { month: "long", day: "numeric" });
+
+          return (
+            <div key={dateStr} style={{ marginBottom: "28px", breakInside: "avoid" }}>
+              {/* Day header */}
+              <div style={{ display: "flex", alignItems: "baseline", gap: "12px", marginBottom: "10px" }}>
+                <div style={{ fontSize: "11px", fontWeight: 800, letterSpacing: "0.12em", color: isToday ? "#111" : "#555" }}>
+                  {dayName}
+                </div>
+                <div style={{ fontSize: "14px", fontWeight: 700, color: "#111" }}>{dayDate}</div>
+                {isToday && (
+                  <div style={{ marginLeft: "auto", fontSize: "9px", fontWeight: 800, letterSpacing: "0.12em", background: "#111", color: "#fff", padding: "2px 7px" }}>TODAY</div>
+                )}
+              </div>
+              <div style={{ borderTop: "1px solid #e5e5e5", paddingTop: "10px" }}>
+                {events.map((ev, ei) => {
+                  // Type label + color bar
+                  let typeLabel = "";
+                  let barColor = ev.color;
+                  if (ev.type === "google") {
+                    typeLabel = ev.calendarName ?? "Google Calendar";
+                    if (ev.timeLabel) typeLabel = `${ev.timeLabel}  ·  ${typeLabel}`;
+                  } else if (ev.type === "project") {
+                    typeLabel = "PROJECT DEADLINE";
+                    barColor = ev.color;
+                  } else {
+                    typeLabel = `TASK${ev.priority ? `  ·  ${ev.priority.toUpperCase()}` : ""}`;
+                  }
+
+                  return (
+                    <div key={ev.id} style={{ display: "flex", alignItems: "stretch", gap: "14px", marginBottom: ei < events.length - 1 ? "8px" : 0, breakInside: "avoid" }}>
+                      {/* Color bar */}
+                      <div style={{ width: "3px", background: barColor, borderRadius: "2px", flexShrink: 0 }} />
+                      {/* Content */}
+                      <div style={{ flex: 1, paddingTop: "1px", paddingBottom: "1px" }}>
+                        <div style={{ fontSize: "14px", fontWeight: 600, color: "#111" }}>{ev.summary}</div>
+                        <div style={{ fontSize: "10px", letterSpacing: "0.06em", color: "#888", marginTop: "2px", textTransform: "uppercase", fontWeight: 600 }}>{typeLabel}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Footer */}
+        <div style={{ borderTop: "1px solid #e5e5e5", marginTop: "40px", paddingTop: "12px", display: "flex", justifyContent: "space-between", fontSize: "9px", color: "#bbb", letterSpacing: "0.08em" }}>
+          <span>PRDCR — PRODUCTION MANAGEMENT</span>
+          <span>{MONTH_NAMES[month].toUpperCase()} {year}</span>
         </div>
       </div>
 
