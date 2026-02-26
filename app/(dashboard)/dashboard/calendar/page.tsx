@@ -27,9 +27,9 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      <Card className="border-dashed border-2">
+      <Card className="min-h-[520px]">
         <CardContent className="flex flex-col items-center justify-center py-20 text-center">
-          <CalendarDays className="w-12 h-12 text-muted-foreground/30 mb-4" />
+          <CalendarDays className="w-12 h-12 text-muted-foreground/45 mb-4" />
           <h3 className="font-medium text-foreground mb-2">Calendar coming soon</h3>
           <p className="text-sm text-muted-foreground max-w-sm">
             A full visual calendar with shoot days, deadlines, and email scanning will be built here.
