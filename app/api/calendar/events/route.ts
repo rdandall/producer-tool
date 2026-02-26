@@ -7,6 +7,7 @@ import {
   type GoogleCalendar,
 } from "@/lib/google-calendar";
 import { getProjects } from "@/lib/db/projects";
+import type { Phase } from "@/lib/db/projects";
 import { getAllTasks } from "@/lib/db/tasks";
 
 export interface PrdcrEvent {
@@ -25,6 +26,8 @@ export interface CalendarEventsResponse {
   googleCalendars: GoogleCalendar[];
   projectDeadlines: PrdcrEvent[];
   taskDeadlines: PrdcrEvent[];
+  availableProjects: { id: string; title: string; color: string }[];
+  projectPhases: Record<string, Phase[]>; // keyed by project UUID
   connected: boolean;
   error?: string;
 }
@@ -96,11 +99,26 @@ export async function GET(req: NextRequest): Promise<NextResponse<CalendarEvents
       priority: t.priority,
     }));
 
+  // ── Extra data for calendar features ──────────────────────────────
+  // getProjects() already fetches phases via select("*, phases(*), ...")
+  const availableProjects = projects.map((p) => ({
+    id: p.id,
+    title: p.title,
+    color: p.color,
+  }));
+
+  const projectPhases: Record<string, Phase[]> = {};
+  for (const p of projects) {
+    if (p.phases?.length) projectPhases[p.id] = p.phases;
+  }
+
   return NextResponse.json({
     googleEvents,
     googleCalendars,
     projectDeadlines,
     taskDeadlines,
+    availableProjects,
+    projectPhases,
     connected: !!refreshToken,
     ...(googleError ? { error: googleError } : {}),
   });
