@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { ArrowUpRight, CheckCircle2 } from "lucide-react";
 import { STATUS_CONFIG } from "@/lib/mock-data";
-import { shortDate, formatDate, formatGreetingDate, daysUntil } from "@/lib/dates";
+import { shortDate, formatDate, formatGreetingDate } from "@/lib/dates";
 import { TaskCheckbox } from "@/components/tasks/task-checkbox";
 import type { Project } from "@/lib/db/projects";
 import type { TaskWithProject } from "@/lib/db/tasks";
@@ -48,15 +48,6 @@ export function DashboardClient({ projects, tasks }: Props) {
   const pendingDrafts = projects.flatMap((p) =>
     (p.edit_versions ?? []).filter((v) => v.status === "draft-sent")
   );
-
-  const projectsWithDueDate = projects.filter((p) => p.due_date);
-  const nextProject =
-    projectsWithDueDate.length > 0
-      ? [...projectsWithDueDate].sort(
-          (a, b) => new Date(a.due_date!).getTime() - new Date(b.due_date!).getTime()
-        )[0]
-      : null;
-  const nextDeadline = nextProject ? daysUntil(nextProject.due_date!) : null;
 
   const todayStr = now.toDateString();
   const todayTasks = openTasks.filter(

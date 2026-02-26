@@ -6,7 +6,8 @@ import type { NextConfig } from "next";
  * - X-Frame-Options: prevents PRDCR being embedded in iframes (clickjacking)
  * - X-Content-Type-Options: stops browsers guessing MIME types (MIME sniffing)
  * - Referrer-Policy: limits referrer info sent to third-party links
- * - Permissions-Policy: disables APIs we don't use (camera, mic, geolocation)
+ * - Permissions-Policy: disables APIs we don't use (camera, geolocation),
+ *   while allowing microphone on this origin for voice dictation.
  * - X-DNS-Prefetch-Control: controls whether the browser pre-resolves DNS
  *
  * Note: Content-Security-Policy is intentionally omitted here — it needs
@@ -32,7 +33,7 @@ const securityHeaders = [
   },
   {
     key: "Permissions-Policy",
-    value: "camera=(), microphone=(), geolocation=(), browsing-topics=()",
+    value: "camera=(), microphone=(self), geolocation=(), browsing-topics=()",
   },
 ];
 

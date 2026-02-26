@@ -46,6 +46,9 @@ export function BriefField({
     }
   }, [value]);
 
+  const micHelpText =
+    "Microphone access is blocked. Click the lock icon in the address bar, allow microphone for this site, then reload.";
+
   /* ── Speech recognition ─────────────────────────────── */
   const toggleRecording = useCallback(async () => {
     if (isRecording) {
@@ -54,14 +57,22 @@ export function BriefField({
       return;
     }
 
+    if (!window.isSecureContext) {
+      setError("Voice input needs HTTPS (or localhost). Open this app on a secure URL and try again.");
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError("This browser does not support microphone capture.");
+      return;
+    }
+
     // Request mic permission explicitly
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((t) => t.stop());
     } catch {
-      setError(
-        "Microphone blocked — click the lock icon in your address bar → allow microphone, then try again."
-      );
+      setError(micHelpText);
       return;
     }
 
@@ -93,9 +104,7 @@ export function BriefField({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     rec.onerror = (e: any) => {
       if (e.error === "not-allowed") {
-        setError(
-          "Microphone blocked — click the lock icon in your address bar → allow microphone, then try again."
-        );
+        setError(micHelpText);
       } else {
         setError(`Mic error: ${e.error}`);
       }

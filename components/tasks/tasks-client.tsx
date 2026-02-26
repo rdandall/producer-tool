@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { List, Columns3 } from "lucide-react";
 import { TaskCheckbox } from "@/components/tasks/task-checkbox";
@@ -32,14 +32,11 @@ export function TasksClient({ tasks, projects }: Props) {
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
   const [projectFilter, setProjectFilter] = useState<string>("all");
 
-  useEffect(() => {
-    const saved = localStorage.getItem("prdcr-tasks-view") as ViewMode | null;
-    if (saved) setView(saved);
-  }, []);
-
   function setViewMode(mode: ViewMode) {
     setView(mode);
-    localStorage.setItem("prdcr-tasks-view", mode);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("prdcr-tasks-view", mode);
+    }
   }
 
   // Apply filters

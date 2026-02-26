@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { ArrowUpRight, LayoutGrid, List } from "lucide-react";
 import { STATUS_CONFIG } from "@/lib/mock-data";
@@ -37,15 +37,11 @@ export function ProjectsClient({ projects }: Props) {
   const [view, setView] = useState<ViewMode>("table");
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
-  // Persist preference
-  useEffect(() => {
-    const saved = localStorage.getItem("prdcr-projects-view") as ViewMode | null;
-    if (saved) setView(saved);
-  }, []);
-
   function setViewMode(mode: ViewMode) {
     setView(mode);
-    localStorage.setItem("prdcr-projects-view", mode);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("prdcr-projects-view", mode);
+    }
   }
 
   const filtered = statusFilter === "all"
