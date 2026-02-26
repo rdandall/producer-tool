@@ -12,6 +12,12 @@ import {
   Plus,
   ArrowRight,
   Printer,
+  HelpCircle,
+  LayoutGrid,
+  List,
+  AlertTriangle,
+  Layers,
+  MousePointerClick,
 } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -115,6 +121,9 @@ export function CalendarClient() {
   // ── Phase expansion state ────────────────────────────────────────
   const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
 
+  // ── Feature guide state ──────────────────────────────────────────
+  const [showFeatures, setShowFeatures] = useState(false);
+
   // Strip ?connected=true from URL after OAuth redirect
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
@@ -122,6 +131,18 @@ export function CalendarClient() {
       window.history.replaceState({}, "", "/dashboard/calendar");
     }
   }, []);
+
+  // Escape key closes features panel or task dialog
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        if (showFeatures) { setShowFeatures(false); return; }
+        if (quickAddDate || convertEvent) { setQuickAddDate(null); setConvertEvent(null); setTaskFormError(""); }
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showFeatures, quickAddDate, convertEvent]);
 
   // ── Fetch events ─────────────────────────────────────────────────
   const fetchEvents = useCallback(async (y: number, m: number) => {
@@ -416,6 +437,15 @@ export function CalendarClient() {
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-muted-foreground border border-border/50 hover:border-foreground/30 hover:text-foreground transition-colors"
               >
                 <Printer className="w-3 h-3" /> Print
+              </button>
+
+              {/* Features guide — low profile */}
+              <button
+                onClick={() => setShowFeatures(true)}
+                title="What can I do here?"
+                className="w-7 h-7 flex items-center justify-center text-muted-foreground/30 hover:text-muted-foreground transition-colors"
+              >
+                <HelpCircle className="w-4 h-4" />
               </button>
 
               {/* Google Calendar connect / disconnect */}
@@ -821,6 +851,97 @@ export function CalendarClient() {
           </div>
         </div>
       </div>
+
+      {/* ── Features Guide Panel ──────────────────────────── */}
+      {showFeatures && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={() => setShowFeatures(false)} />
+          <div className="relative bg-background border border-border shadow-xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <div>
+                <p className="text-sm font-bold text-foreground">What can I do here?</p>
+                <p className="text-[11px] text-muted-foreground/50 mt-0.5">Everything the calendar supports</p>
+              </div>
+              <button onClick={() => setShowFeatures(false)} className="text-muted-foreground/40 hover:text-foreground transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-0.5">
+              {[
+                {
+                  icon: <Plus className="w-4 h-4" />,
+                  color: "#6366f1",
+                  title: "Quick-add task",
+                  desc: "Hover any day → click + to create a task with the date pre-filled",
+                },
+                {
+                  icon: <ArrowRight className="w-4 h-4" />,
+                  color: "#8b5cf6",
+                  title: "Convert event → task",
+                  desc: "Click → Task on any Google event to turn it into a PRDCR task",
+                },
+                {
+                  icon: <LayoutGrid className="w-4 h-4" />,
+                  color: "#0ea5e9",
+                  title: "Week view",
+                  desc: "Toggle Month | Week in the nav bar for a focused 7-day layout",
+                },
+                {
+                  icon: <List className="w-4 h-4" />,
+                  color: "#10b981",
+                  title: "Agenda",
+                  desc: "Toggle Day | Agenda in the side panel for a rolling 14-day list",
+                },
+                {
+                  icon: <Layers className="w-4 h-4" />,
+                  color: "#f59e0b",
+                  title: "Phase timeline",
+                  desc: "Click ▼ phases on any project deadline to see production phases",
+                },
+                {
+                  icon: <AlertTriangle className="w-4 h-4" />,
+                  color: "#f97316",
+                  title: "Conflict detection",
+                  desc: "Amber banner appears automatically when 2+ deadlines land the same week",
+                },
+                {
+                  icon: <MousePointerClick className="w-4 h-4" />,
+                  color: "#ec4899",
+                  title: "Click any day",
+                  desc: "Select a date to see all events for that day in the side panel",
+                },
+                {
+                  icon: <Printer className="w-4 h-4" />,
+                  color: "#64748b",
+                  title: "Print schedule",
+                  desc: "Click Print in the top bar to export a clean calendar to PDF",
+                },
+                {
+                  icon: <CalendarDays className="w-4 h-4" />,
+                  color: "#4285f4",
+                  title: "Google Calendar sync",
+                  desc: "Connect or disconnect Google Calendar from the top-right corner",
+                },
+              ].map(({ icon, color, title, desc }) => (
+                <div key={title} className="flex items-start gap-3 px-3 py-2.5 rounded-sm hover:bg-accent/10 transition-colors group">
+                  <div className="shrink-0 w-7 h-7 flex items-center justify-center rounded-md mt-0.5" style={{ backgroundColor: `${color}18`, color }}>
+                    {icon}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[12px] font-semibold text-foreground leading-none mb-1">{title}</p>
+                    <p className="text-[11px] text-muted-foreground/60 leading-snug">{desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="px-6 py-3 border-t border-border/50">
+              <p className="text-[10px] text-muted-foreground/30 text-center">Press Esc or click outside to close</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Quick-add / Convert Task Dialog ──────────────────── */}
       {taskDialogOpen && (
