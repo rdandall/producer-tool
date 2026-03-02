@@ -39,6 +39,23 @@ export async function createTaskAction(formData: FormData) {
   revalidatePath("/dashboard", "layout");
 }
 
+export async function updateTaskAction(
+  taskId: string,
+  updates: {
+    title?: string;
+    priority?: string;
+    project_id?: string | null;
+    due_date?: string | null;
+    assigned_to?: string | null;
+    links?: Array<{ label: string; url: string }>;
+  }
+) {
+  const supabase = await createClient();
+  const { error } = await supabase.from("tasks").update(updates).eq("id", taskId);
+  if (error) throw new Error(error.message);
+  revalidatePath("/dashboard", "layout");
+}
+
 export async function deleteTaskAction(taskId: string) {
   const supabase = await createClient();
   const { error } = await supabase.from("tasks").delete().eq("id", taskId);

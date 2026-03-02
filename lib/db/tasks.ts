@@ -1,5 +1,10 @@
 import { createClient } from "@/lib/supabase/server";
 
+export interface TaskLink {
+  label: string;
+  url: string;
+}
+
 export interface TaskWithProject {
   id: string;
   title: string;
@@ -7,6 +12,8 @@ export interface TaskWithProject {
   project_id: string | null;
   due_date: string | null;
   priority: "high" | "medium" | "low";
+  assigned_to: string | null;
+  links: TaskLink[];
   created_at: string;
   projects: {
     id: string;
@@ -28,5 +35,8 @@ export async function getAllTasks(): Promise<TaskWithProject[]> {
     console.error("getAllTasks:", error.message);
     return [];
   }
-  return data ?? [];
+  return (data ?? []).map((t) => ({
+    ...t,
+    links: Array.isArray(t.links) ? t.links : [],
+  }));
 }
