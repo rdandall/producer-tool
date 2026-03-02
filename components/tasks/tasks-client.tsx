@@ -2,10 +2,12 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { List, Columns3 } from "lucide-react";
+import { List, Columns3, Link2 } from "lucide-react";
+import { AnimatePresence } from "framer-motion";
 import { TaskCheckbox } from "@/components/tasks/task-checkbox";
 import { DeleteTaskButton } from "@/components/tasks/delete-task-button";
 import { NewTaskForm } from "@/components/tasks/new-task-form";
+import { TaskDetailPanel } from "@/components/tasks/task-detail-panel";
 import { cn } from "@/lib/utils";
 import { formatDate, isOverdue } from "@/lib/dates";
 import type { TaskWithProject } from "@/lib/db/tasks";
@@ -24,13 +26,27 @@ interface Props {
 type ViewMode = "list" | "board";
 
 const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 };
-
 const PRIORITY_FILTERS = ["all", "high", "medium", "low"] as const;
+
+const PRIORITY_STRIP: Record<string, string> = {
+  high: "bg-destructive",
+  medium: "bg-amber-400",
+  low: "bg-border/60",
+};
+
+function getInitials(name: string): string {
+  return name
+    .split(/\s+/)
+    .map((p) => p[0]?.toUpperCase() ?? "")
+    .slice(0, 2)
+    .join("");
+}
 
 export function TasksClient({ tasks, projects }: Props) {
   const [view, setView] = useState<ViewMode>("list");
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
   const [projectFilter, setProjectFilter] = useState<string>("all");
+  const [selectedTask, setSelectedTask] = useState<TaskWithProject | null>(null);
 
   // Restore saved view preference on mount
   useEffect(() => {
@@ -45,7 +61,11 @@ export function TasksClient({ tasks, projects }: Props) {
     }
   }
 
-  // Apply filters
+  // When the task list revalidates, keep selected task in sync
+  const syncedSelected = selectedTask
+    ? (tasks.find((t) => t.id === selectedTask.id) ?? null)
+    : null;
+
   let filtered = tasks;
   if (priorityFilter !== "all") {
     filtered = filtered.filter((t) => t.priority === priorityFilter);
@@ -75,7 +95,6 @@ export function TasksClient({ tasks, projects }: Props) {
           </span>
         </div>
         <div className="flex items-center gap-3">
-          {/* View toggle */}
           <div className="flex items-center gap-0 border border-border">
             <button
               onClick={() => setViewMode("list")}
@@ -108,7 +127,6 @@ export function TasksClient({ tasks, projects }: Props) {
 
       {/* Filter bar */}
       <div className="flex items-center gap-4 px-8 py-2.5 border-b border-border/50 shrink-0">
-        {/* Priority chips */}
         <div className="flex items-center gap-1.5">
           {PRIORITY_FILTERS.map((p) => {
             const label = p === "all" ? "All" : p.charAt(0).toUpperCase() + p.slice(1);
@@ -130,7 +148,6 @@ export function TasksClient({ tasks, projects }: Props) {
           })}
         </div>
 
-        {/* Project dropdown */}
         {projects.length > 0 && (
           <select
             value={projectFilter}
@@ -147,18 +164,162 @@ export function TasksClient({ tasks, projects }: Props) {
         )}
       </div>
 
-      {/* Content */}
-      {view === "list" ? (
-        <ListView open={open} done={done} />
-      ) : (
-        <BoardView open={open} done={done} />
+      {/* Content + Panel */}
+      <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 overflow-hidden">
+          {view === "list" ? (
+            <ListView
+              open={open}
+              done={done}
+              selectedTaskId={syncedSelected?.id ?? null}
+              onSelectTask={setSelectedTask}
+            />
+          ) : (
+            <BoardView
+              open={open}
+              done={done}
+              selectedTaskId={syncedSelected?.id ?? null}
+              onSelectTask={setSelectedTask}
+            />
+          )}
+        </div>
+
+        <AnimatePresence>
+          {syncedSelected && (
+            <TaskDetailPanel
+              key={syncedSelected.id}
+              task={syncedSelected}
+              projects={projects}
+              onClose={() => setSelectedTask(null)}
+            />
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
+/* ── Shared Task Row ─────────────────────────────────────── */
+function TaskRow({
+  task,
+  index,
+  selectedTaskId,
+  onSelectTask,
+  compact = false,
+}: {
+  task: TaskWithProject;
+  index: number;
+  selectedTaskId: string | null;
+  onSelectTask: (task: TaskWithProject) => void;
+  compact?: boolean;
+}) {
+  const overdue = task.due_date && isOverdue(task.due_date);
+  const isSelected = task.id === selectedTaskId;
+
+  function handleRowClick(e: React.MouseEvent) {
+    if ((e.target as HTMLElement).closest("[data-no-panel]")) return;
+    onSelectTask(task);
+  }
+
+  return (
+    <div
+      onClick={handleRowClick}
+      className={cn(
+        "relative flex items-center gap-3 px-4 cursor-pointer transition-colors group",
+        compact ? "py-3" : "py-3.5",
+        index !== 0 && "border-t border-border/60",
+        isSelected ? "bg-accent/40" : "hover:bg-accent/20",
+        task.completed && "opacity-60"
       )}
+    >
+      {/* Priority strip */}
+      <div
+        className={cn(
+          "absolute left-0 inset-y-0 w-[3px]",
+          PRIORITY_STRIP[task.priority]
+        )}
+      />
+
+      <div data-no-panel className="shrink-0">
+        <TaskCheckbox taskId={task.id} completed={task.completed} />
+      </div>
+
+      <p
+        className={cn(
+          "flex-1 text-sm min-w-0 truncate",
+          task.completed && "line-through text-muted-foreground"
+        )}
+      >
+        {task.title}
+      </p>
+
+      {/* Assignee bubble */}
+      {task.assigned_to && (
+        <div
+          className="w-5 h-5 rounded-full bg-accent border border-border flex items-center justify-center text-[9px] font-semibold text-foreground shrink-0"
+          title={task.assigned_to}
+        >
+          {getInitials(task.assigned_to)}
+        </div>
+      )}
+
+      {/* Link count */}
+      {task.links?.length > 0 && (
+        <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground/40 shrink-0">
+          <Link2 className="w-3 h-3" />
+          {task.links.length}
+        </span>
+      )}
+
+      {/* Project badge */}
+      {task.projects && (
+        <div data-no-panel>
+          <Link href={`/dashboard/projects/${task.projects.id}`}>
+            <span
+              className="text-[11px] font-medium px-2 py-0.5 border transition-colors hover:opacity-80"
+              style={{
+                borderColor: `${task.projects.color}40`,
+                color: task.projects.color,
+                backgroundColor: `${task.projects.color}10`,
+              }}
+            >
+              {task.projects.client ?? task.projects.title}
+            </span>
+          </Link>
+        </div>
+      )}
+
+      {/* Due date */}
+      {task.due_date && (
+        <span
+          className={cn(
+            "text-xs tabular-nums shrink-0 w-20 text-right",
+            overdue ? "text-destructive font-medium" : "text-muted-foreground"
+          )}
+        >
+          {formatDate(task.due_date)}
+        </span>
+      )}
+
+      <div data-no-panel className="shrink-0">
+        <DeleteTaskButton taskId={task.id} />
+      </div>
     </div>
   );
 }
 
 /* ── List View ───────────────────────────────────────────── */
-function ListView({ open, done }: { open: TaskWithProject[]; done: TaskWithProject[] }) {
+function ListView({
+  open,
+  done,
+  selectedTaskId,
+  onSelectTask,
+}: {
+  open: TaskWithProject[];
+  done: TaskWithProject[];
+  selectedTaskId: string | null;
+  onSelectTask: (task: TaskWithProject) => void;
+}) {
   const todayTasks = open.filter((t) => t.due_date && formatDate(t.due_date) === "Today");
   const upcomingTasks = open.filter((t) => !t.due_date || formatDate(t.due_date) !== "Today");
 
@@ -169,7 +330,17 @@ function ListView({ open, done }: { open: TaskWithProject[]; done: TaskWithProje
           <p className="text-[10px] uppercase tracking-[0.14em] font-semibold text-muted-foreground/50 mb-4">
             Today
           </p>
-          <TaskTable tasks={todayTasks} />
+          <div className="border border-border">
+            {todayTasks.map((task, i) => (
+              <TaskRow
+                key={task.id}
+                task={task}
+                index={i}
+                selectedTaskId={selectedTaskId}
+                onSelectTask={onSelectTask}
+              />
+            ))}
+          </div>
         </section>
       )}
 
@@ -178,7 +349,17 @@ function ListView({ open, done }: { open: TaskWithProject[]; done: TaskWithProje
           <p className="text-[10px] uppercase tracking-[0.14em] font-semibold text-muted-foreground/50 mb-4">
             Upcoming
           </p>
-          <TaskTable tasks={upcomingTasks} />
+          <div className="border border-border">
+            {upcomingTasks.map((task, i) => (
+              <TaskRow
+                key={task.id}
+                task={task}
+                index={i}
+                selectedTaskId={selectedTaskId}
+                onSelectTask={onSelectTask}
+              />
+            ))}
+          </div>
         </section>
       )}
 
@@ -187,25 +368,15 @@ function ListView({ open, done }: { open: TaskWithProject[]; done: TaskWithProje
           <p className="text-[10px] uppercase tracking-[0.14em] font-semibold text-muted-foreground/50 mb-4">
             Completed
           </p>
-          <div className="border border-border/40 opacity-50">
+          <div className="border border-border/40">
             {done.map((task, i) => (
-              <div
+              <TaskRow
                 key={task.id}
-                data-task-row
-                className={cn(
-                  "flex items-center gap-4 px-4 py-3 group",
-                  i !== 0 && "border-t border-border/40"
-                )}
-              >
-                <TaskCheckbox taskId={task.id} completed={task.completed} />
-                <p className="flex-1 text-sm text-muted-foreground line-through">{task.title}</p>
-                {task.projects && (
-                  <span className="text-xs text-muted-foreground">
-                    {task.projects.client ?? task.projects.title}
-                  </span>
-                )}
-                <DeleteTaskButton taskId={task.id} />
-              </div>
+                task={task}
+                index={i}
+                selectedTaskId={selectedTaskId}
+                onSelectTask={onSelectTask}
+              />
             ))}
           </div>
         </section>
@@ -220,69 +391,36 @@ function ListView({ open, done }: { open: TaskWithProject[]; done: TaskWithProje
   );
 }
 
-function TaskTable({ tasks }: { tasks: TaskWithProject[] }) {
-  return (
-    <div className="border border-border">
-      {tasks.map((task, i) => {
-        const overdue = task.due_date && isOverdue(task.due_date);
-
-        return (
-          <div
-            key={task.id}
-            data-task-row
-            className={cn(
-              "flex items-center gap-4 px-4 py-3.5 group hover:bg-accent/20 transition-colors",
-              i !== 0 && "border-t border-border/60"
-            )}
-          >
-            <TaskCheckbox taskId={task.id} completed={task.completed} />
-
-            {task.priority === "high" && (
-              <div className="w-1.5 h-1.5 rounded-full bg-destructive shrink-0" />
-            )}
-
-            <p className="flex-1 text-sm text-foreground">{task.title}</p>
-
-            {task.projects && (
-              <Link href={`/dashboard/projects/${task.projects.id}`}>
-                <span
-                  className="text-[11px] font-medium px-2 py-0.5 border transition-colors hover:opacity-80"
-                  style={{
-                    borderColor: `${task.projects.color}40`,
-                    color: task.projects.color,
-                    backgroundColor: `${task.projects.color}10`,
-                  }}
-                >
-                  {task.projects.client ?? task.projects.title}
-                </span>
-              </Link>
-            )}
-
-            {task.due_date && (
-              <span className={cn(
-                "text-xs tabular-nums shrink-0 w-20 text-right",
-                overdue ? "text-destructive font-medium" : "text-muted-foreground"
-              )}>
-                {formatDate(task.due_date)}
-              </span>
-            )}
-
-            <DeleteTaskButton taskId={task.id} />
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 /* ── Board View (Kanban) ─────────────────────────────────── */
 const BOARD_COLUMNS = [
-  { key: "todo", label: "To Do", filter: (t: TaskWithProject) => !t.completed && t.priority !== "high" },
-  { key: "priority", label: "High Priority", filter: (t: TaskWithProject) => !t.completed && t.priority === "high" },
-  { key: "done", label: "Done", filter: (t: TaskWithProject) => t.completed },
+  {
+    key: "todo",
+    label: "To Do",
+    filter: (t: TaskWithProject) => !t.completed && t.priority !== "high",
+  },
+  {
+    key: "priority",
+    label: "High Priority",
+    filter: (t: TaskWithProject) => !t.completed && t.priority === "high",
+  },
+  {
+    key: "done",
+    label: "Done",
+    filter: (t: TaskWithProject) => t.completed,
+  },
 ] as const;
 
-function BoardView({ open, done }: { open: TaskWithProject[]; done: TaskWithProject[] }) {
+function BoardView({
+  open,
+  done,
+  selectedTaskId,
+  onSelectTask,
+}: {
+  open: TaskWithProject[];
+  done: TaskWithProject[];
+  selectedTaskId: string | null;
+  onSelectTask: (task: TaskWithProject) => void;
+}) {
   const all = [...open, ...done];
   const columns = BOARD_COLUMNS.map((col) => ({
     ...col,
@@ -303,64 +441,21 @@ function BoardView({ open, done }: { open: TaskWithProject[]; done: TaskWithProj
               </span>
             </div>
 
-            <div className="space-y-2">
-              {col.tasks.map((task) => {
-                const overdue = task.due_date && isOverdue(task.due_date);
-                return (
-                  <div
-                    key={task.id}
-                    data-task-row
-                    className={cn(
-                      "border border-border p-3.5 hover:shadow-sm transition-shadow group",
-                      task.completed && "opacity-40"
-                    )}
-                  >
-                    <div className="flex items-start gap-3">
-                      <TaskCheckbox taskId={task.id} completed={task.completed} />
-                      <div className="flex-1 min-w-0">
-                        <p className={cn(
-                          "text-sm text-foreground leading-snug",
-                          task.completed && "line-through text-muted-foreground"
-                        )}>
-                          {task.title}
-                        </p>
-
-                        <div className="flex items-center gap-2 mt-2">
-                          {task.priority === "high" && !task.completed && (
-                            <span className="text-[10px] font-semibold text-destructive uppercase tracking-wider">
-                              High
-                            </span>
-                          )}
-                          {task.projects && (
-                            <span
-                              className="text-[10px] font-medium px-1.5 py-0.5"
-                              style={{
-                                color: task.projects.color,
-                                backgroundColor: `${task.projects.color}15`,
-                              }}
-                            >
-                              {task.projects.client ?? task.projects.title}
-                            </span>
-                          )}
-                          {task.due_date && (
-                            <span className={cn(
-                              "text-[10px] tabular-nums",
-                              overdue ? "text-destructive font-medium" : "text-muted-foreground"
-                            )}>
-                              {formatDate(task.due_date)}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <DeleteTaskButton taskId={task.id} />
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="border border-border overflow-hidden">
+              {col.tasks.map((task, i) => (
+                <TaskRow
+                  key={task.id}
+                  task={task}
+                  index={i}
+                  selectedTaskId={selectedTaskId}
+                  onSelectTask={onSelectTask}
+                  compact
+                />
+              ))}
 
               {col.tasks.length === 0 && (
-                <div className="border border-dashed border-border/40 py-8 text-center">
-                  <p className="text-xs text-muted-foreground/40">No tasks</p>
+                <div className="py-8 text-center">
+                  <p className="text-xs text-muted-foreground/30">No tasks</p>
                 </div>
               )}
             </div>

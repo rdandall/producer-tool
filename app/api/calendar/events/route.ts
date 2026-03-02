@@ -4,8 +4,10 @@ import {
   refreshGoogleToken,
   fetchGoogleCalendarEvents,
   type GoogleCalendarEvent,
+  type GoogleCalendar,
 } from "@/lib/google-calendar";
 import { getProjects } from "@/lib/db/projects";
+import type { Phase } from "@/lib/db/projects";
 import { getAllTasks } from "@/lib/db/tasks";
 
 export interface PrdcrEvent {
@@ -21,8 +23,11 @@ export interface PrdcrEvent {
 
 export interface CalendarEventsResponse {
   googleEvents: GoogleCalendarEvent[];
+  googleCalendars: GoogleCalendar[];
   projectDeadlines: PrdcrEvent[];
   taskDeadlines: PrdcrEvent[];
+  availableProjects: { id: string; title: string; color: string }[];
+  projectPhases: Record<string, Phase[]>; // keyed by project UUID
   connected: boolean;
   error?: string;
 }
@@ -39,6 +44,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<CalendarEvents
   // ── Google Calendar events ──────────────────────────────────────────
   const refreshToken = await getSetting("google_refresh_token");
   let googleEvents: GoogleCalendarEvent[] = [];
+  let googleCalendars: GoogleCalendar[] = [];
   let googleError: string | undefined;
 
   if (refreshToken) {
@@ -57,7 +63,9 @@ export async function GET(req: NextRequest): Promise<NextResponse<CalendarEvents
         );
       }
 
-      googleEvents = await fetchGoogleCalendarEvents(accessToken, timeMin, timeMax);
+      const result = await fetchGoogleCalendarEvents(accessToken, timeMin, timeMax);
+      googleEvents = result.events;
+      googleCalendars = result.calendars;
     } catch (err) {
       console.error("Google Calendar error:", err);
       googleError = "Failed to fetch Google Calendar events";
@@ -91,10 +99,26 @@ export async function GET(req: NextRequest): Promise<NextResponse<CalendarEvents
       priority: t.priority,
     }));
 
+  // ── Extra data for calendar features ──────────────────────────────
+  // getProjects() already fetches phases via select("*, phases(*), ...")
+  const availableProjects = projects.map((p) => ({
+    id: p.id,
+    title: p.title,
+    color: p.color,
+  }));
+
+  const projectPhases: Record<string, Phase[]> = {};
+  for (const p of projects) {
+    if (p.phases?.length) projectPhases[p.id] = p.phases;
+  }
+
   return NextResponse.json({
     googleEvents,
+    googleCalendars,
     projectDeadlines,
     taskDeadlines,
+    availableProjects,
+    projectPhases,
     connected: !!refreshToken,
     ...(googleError ? { error: googleError } : {}),
   });

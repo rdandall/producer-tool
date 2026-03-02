@@ -62,6 +62,8 @@ create table if not exists tasks (
   due_date      date,
   priority      text        not null default 'medium'
                             check (priority in ('high','medium','low')),
+  assigned_to   text,
+  links         jsonb       not null default '[]'::jsonb,
   created_at    timestamptz not null default now()
 );
 
@@ -158,3 +160,8 @@ insert into tasks (title, completed, project_id, due_date, priority) values
 ('Book studio space for March 10–11',  false, 'a3000000-0000-0000-0000-000000000003', '2026-02-28', 'high'),
 ('Renew Premiere Pro licence',         false, null,                                   '2026-03-01', 'low'),
 ('Chase James re: invoice',            false, null,                                   '2026-02-26', 'medium');
+
+
+-- ── Migration: run these if the tasks table already exists ─────────────────
+-- alter table tasks add column if not exists assigned_to text;
+-- alter table tasks add column if not exists links jsonb not null default '[]'::jsonb;

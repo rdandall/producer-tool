@@ -17,6 +17,12 @@ export interface GoogleCalendarEvent {
   allDay: boolean;
 }
 
+export interface GoogleCalendar {
+  id: string;
+  name: string;
+  color: string;
+}
+
 // ── OAuth helpers ────────────────────────────────────────────────────
 
 /** Build the Google OAuth consent screen URL. */
@@ -77,25 +83,25 @@ export async function fetchGoogleCalendarEvents(
   accessToken: string,
   timeMin: string,
   timeMax: string
-): Promise<GoogleCalendarEvent[]> {
+): Promise<{ events: GoogleCalendarEvent[]; calendars: GoogleCalendar[] }> {
   // 1. Get list of all calendars
   const calsRes = await fetch(`${GOOGLE_CALENDAR_BASE}/users/me/calendarList`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!calsRes.ok) throw new Error("Failed to fetch calendar list");
   const calsData = await calsRes.json();
-  const calendars: Array<{
+  const rawCalendars: Array<{
     id: string;
     summary: string;
     backgroundColor: string;
     accessRole: string;
   }> = calsData.items ?? [];
 
+  const accessibleCals = rawCalendars.filter((c) => c.accessRole !== "freeBusyReader");
+
   // 2. Fetch events from each accessible calendar in parallel
   const eventArrays = await Promise.all(
-    calendars
-      .filter((c) => c.accessRole !== "freeBusyReader")
-      .map(async (cal) => {
+    accessibleCals.map(async (cal) => {
         const url =
           `${GOOGLE_CALENDAR_BASE}/calendars/${encodeURIComponent(cal.id)}/events?` +
           new URLSearchParams({
@@ -131,5 +137,11 @@ export async function fetchGoogleCalendarEvents(
       })
   );
 
-  return eventArrays.flat();
+  const calendars: GoogleCalendar[] = accessibleCals.map((c) => ({
+    id: c.id,
+    name: c.summary,
+    color: c.backgroundColor ?? "#4285f4",
+  }));
+
+  return { events: eventArrays.flat(), calendars };
 }
