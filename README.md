@@ -1,4 +1,4 @@
-# PRDCR — The Producer's Operating System
+# PRDCR — The Producer's Operating System, by Rob
 
 Built for film and video producers who are tired of losing hours to admin work.
 
