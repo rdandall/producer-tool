@@ -13,7 +13,7 @@ const navItems = [
   { label: "Dashboard",       href: "/dashboard",           icon: LayoutDashboard },
   { label: "Projects",        href: "/dashboard/projects",  icon: FolderKanban },
   { label: "Tasks",           href: "/dashboard/tasks",     icon: CheckSquare },
-  { label: "Calendar",        href: "/dashboard/calendar",  icon: CalendarDays,  disabled: true },
+  { label: "Calendar",        href: "/dashboard/calendar",  icon: CalendarDays },
   { label: "Notes & Briefs",  href: "/dashboard/notes",     icon: FileText,      disabled: true },
   { label: "Voice Dictation", href: "/dashboard/dictation", icon: Mic,           disabled: true },
   { label: "Team Briefs",     href: "/dashboard/team",      icon: Users,         disabled: true },

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { List, Columns3, Link2 } from "lucide-react";
 import { AnimatePresence } from "framer-motion";
@@ -47,6 +47,12 @@ export function TasksClient({ tasks, projects }: Props) {
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [selectedTask, setSelectedTask] = useState<TaskWithProject | null>(null);
+
+  // Restore saved view preference on mount
+  useEffect(() => {
+    const saved = localStorage.getItem("prdcr-tasks-view") as ViewMode | null;
+    if (saved) setView(saved);
+  }, []);
 
   function setViewMode(mode: ViewMode) {
     setView(mode);
