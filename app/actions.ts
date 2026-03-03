@@ -168,3 +168,60 @@ export async function deletePhaseAction(phaseId: string) {
   if (error) throw new Error(error.message);
   revalidatePath("/dashboard", "layout");
 }
+
+// ── Note actions ──────────────────────────────────────────────────────────
+
+import type { NoteType, NoteLink, ExtractedTask } from "@/lib/db/notes";
+
+export async function createNoteAction(fields: {
+  title?: string;
+  type?: NoteType;
+  raw_input?: string;
+  content?: string;
+  project_id?: string | null;
+}): Promise<string> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("notes")
+    .insert({
+      title:      fields.title      ?? "Untitled Note",
+      type:       fields.type       ?? "notes",
+      raw_input:  fields.raw_input  ?? "",
+      content:    fields.content    ?? null,
+      project_id: fields.project_id ?? null,
+    })
+    .select("id")
+    .single();
+
+  if (error) throw new Error(error.message);
+  revalidatePath("/dashboard", "layout");
+  return data.id;
+}
+
+export async function updateNoteAction(
+  noteId: string,
+  updates: {
+    title?: string;
+    type?: NoteType;
+    raw_input?: string;
+    content?: string;
+    project_id?: string | null;
+    links?: NoteLink[];
+    extracted_tasks?: ExtractedTask[];
+  }
+) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("notes")
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq("id", noteId);
+  if (error) throw new Error(error.message);
+  revalidatePath("/dashboard", "layout");
+}
+
+export async function deleteNoteAction(noteId: string) {
+  const supabase = await createClient();
+  const { error } = await supabase.from("notes").delete().eq("id", noteId);
+  if (error) throw new Error(error.message);
+  revalidatePath("/dashboard", "layout");
+}
