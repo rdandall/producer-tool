@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   CalendarDays, FolderKanban, FileText,
-  Users, LayoutDashboard, Mic, CheckSquare,
+  Users, LayoutDashboard, CheckSquare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./theme-toggle";
@@ -14,9 +14,8 @@ const navItems = [
   { label: "Projects",        href: "/dashboard/projects",  icon: FolderKanban },
   { label: "Tasks",           href: "/dashboard/tasks",     icon: CheckSquare },
   { label: "Calendar",        href: "/dashboard/calendar",  icon: CalendarDays },
-  { label: "Notes & Briefs",  href: "/dashboard/notes",     icon: FileText,      disabled: true },
-  { label: "Voice Dictation", href: "/dashboard/dictation", icon: Mic,           disabled: true },
-  { label: "Team Briefs",     href: "/dashboard/team",      icon: Users,         disabled: true },
+  { label: "Notes & Briefs",  href: "/dashboard/notes",     icon: FileText },
+  { label: "Team",            href: "/dashboard/team",      icon: Users,         disabled: true },
 ];
 
 export function Sidebar() {

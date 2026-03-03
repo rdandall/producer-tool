@@ -162,6 +162,29 @@ insert into tasks (title, completed, project_id, due_date, priority) values
 ('Chase James re: invoice',            false, null,                                   '2026-02-26', 'medium');
 
 
+-- ── Notes & Briefs ────────────────────────────────────────────────────────
+create table if not exists notes (
+  id              uuid        primary key default gen_random_uuid(),
+  title           text        not null default 'Untitled Note',
+  type            text        not null default 'notes'
+                              check (type in ('brief','meeting-notes','project-notes','client-brief')),
+  raw_input       text        not null default '',
+  content         text,
+  project_id      uuid        references projects(id) on delete set null,
+  links           jsonb       not null default '[]'::jsonb,
+  extracted_tasks jsonb       not null default '[]'::jsonb,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+
+create index if not exists notes_project_id_idx  on notes(project_id);
+create index if not exists notes_created_at_idx  on notes(created_at desc);
+create index if not exists notes_type_idx        on notes(type);
+
+alter table notes enable row level security;
+create policy "allow_all" on notes for all using (true) with check (true);
+
+
 -- ── Migration: run these if the tasks table already exists ─────────────────
 -- alter table tasks add column if not exists assigned_to text;
 -- alter table tasks add column if not exists links jsonb not null default '[]'::jsonb;
