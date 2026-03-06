@@ -225,3 +225,44 @@ export async function deleteNoteAction(noteId: string) {
   if (error) throw new Error(error.message);
   revalidatePath("/dashboard", "layout");
 }
+
+// ── Email task suggestion actions ──────────────────────────────────────────────
+
+/** Approve an email task suggestion: creates the task and marks suggestion approved */
+export async function approveEmailTaskSuggestionAction(
+  suggestionId: string,
+  task: {
+    title: string;
+    priority: string;
+    project_id: string | null;
+    due_date: string | null;
+  }
+) {
+  const supabase = await createClient();
+
+  await Promise.all([
+    supabase.from("tasks").insert({
+      title: task.title,
+      priority: task.priority || "medium",
+      project_id: task.project_id || null,
+      due_date: task.due_date || null,
+      completed: false,
+    }),
+    supabase
+      .from("email_task_suggestions")
+      .update({ status: "approved" })
+      .eq("id", suggestionId),
+  ]);
+
+  revalidatePath("/dashboard", "layout");
+}
+
+/** Dismiss an email task suggestion without creating a task */
+export async function dismissEmailTaskSuggestionAction(suggestionId: string) {
+  const supabase = await createClient();
+  await supabase
+    .from("email_task_suggestions")
+    .update({ status: "dismissed" })
+    .eq("id", suggestionId);
+  revalidatePath("/dashboard/email");
+}

@@ -11,6 +11,7 @@ import {
   CheckSquare,
   PanelLeftClose,
   PanelLeftOpen,
+  Mail,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./theme-toggle";
@@ -22,6 +23,7 @@ const navItems = [
   { label: "Tasks", href: "/dashboard/tasks", icon: CheckSquare },
   { label: "Calendar", href: "/dashboard/calendar", icon: CalendarDays },
   { label: "Notes & Briefs", href: "/dashboard/notes", icon: FileText },
+  { label: "Email", href: "/dashboard/email", icon: Mail },
   { label: "Team", href: "/dashboard/team", icon: Users, disabled: true },
 ];
 
