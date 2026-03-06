@@ -12,6 +12,7 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const from = searchParams.get("from") || "/dashboard";
+  const reason = searchParams.get("reason");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -46,9 +47,21 @@ function LoginForm() {
           </p>
         </div>
 
+        {/* Session-ended banner */}
+        {reason === "session_ended" && (
+          <div className="border border-amber-500/40 bg-amber-500/10 px-3 py-2.5">
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              Your session was ended. Please log back in.
+            </p>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <label htmlFor="password" className="text-xs text-muted-foreground uppercase tracking-widest">
+            <label
+              htmlFor="password"
+              className="text-xs text-muted-foreground uppercase tracking-widest"
+            >
               Password
             </label>
             <input

@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import type { PhaseStatus } from "@/lib/db/projects";
+import { getSetting, setSetting } from "@/lib/db/settings";
 
 // ── Task actions ──────────────────────────────────────────────────────────
 
@@ -265,4 +266,35 @@ export async function dismissEmailTaskSuggestionAction(suggestionId: string) {
     .update({ status: "dismissed" })
     .eq("id", suggestionId);
   revalidatePath("/dashboard/email");
+}
+
+// ── Settings actions ───────────────────────────────────────────────────────
+
+async function getCurrentSitePassword(): Promise<string> {
+  const dbPw = await getSetting("site_password");
+  return dbPw || process.env.SITE_PASSWORD || "thevision";
+}
+
+/** Increment session_version so all existing cookies become invalid. */
+export async function invalidateAllSessionsAction(password: string): Promise<void> {
+  const sitePassword = await getCurrentSitePassword();
+  if (password !== sitePassword) throw new Error("Incorrect password");
+
+  const current = parseInt((await getSetting("session_version")) ?? "1", 10) || 1;
+  await setSetting("session_version", String(current + 1));
+  // Caller is responsible for redirecting to /login after this completes
+}
+
+/** Change the site-wide access password (stored in DB). */
+export async function changeSitePasswordAction(
+  currentPassword: string,
+  newPassword: string
+): Promise<void> {
+  const sitePassword = await getCurrentSitePassword();
+  if (currentPassword !== sitePassword) throw new Error("Incorrect current password");
+  if (!newPassword || newPassword.trim().length < 4)
+    throw new Error("New password must be at least 4 characters");
+
+  await setSetting("site_password", newPassword.trim());
+  revalidatePath("/dashboard/settings");
 }

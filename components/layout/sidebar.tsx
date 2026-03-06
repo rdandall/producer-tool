@@ -12,6 +12,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Mail,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./theme-toggle";
@@ -24,6 +25,7 @@ const navItems = [
   { label: "Calendar", href: "/dashboard/calendar", icon: CalendarDays },
   { label: "Notes & Briefs", href: "/dashboard/notes", icon: FileText },
   { label: "Email", href: "/dashboard/email", icon: Mail },
+  { label: "Settings", href: "/dashboard/settings", icon: Settings },
   { label: "Team", href: "/dashboard/team", icon: Users, disabled: true },
 ];
 
