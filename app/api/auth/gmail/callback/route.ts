@@ -41,9 +41,10 @@ export async function GET(req: NextRequest) {
       if (userInfo.email) await setSetting("gmail_user_email", userInfo.email);
     }
   } catch (err) {
-    console.error("Gmail OAuth callback error:", err);
+    const msg = err instanceof Error ? err.message : "unknown";
+    console.error("Gmail OAuth callback error:", msg);
     return NextResponse.redirect(
-      `${origin}/dashboard/email?error=token_exchange_failed`
+      `${origin}/dashboard/email?error=token_exchange_failed&detail=${encodeURIComponent(msg)}`
     );
   }
 

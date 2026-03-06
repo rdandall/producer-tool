@@ -2,7 +2,7 @@
 
 import { Mail, CheckCircle2, Zap, ListChecks, AlertTriangle } from "lucide-react";
 
-export function GmailConnect() {
+export function GmailConnect({ error, detail }: { error?: string; detail?: string }) {
   const features = [
     {
       icon: Mail,
@@ -59,6 +59,18 @@ export function GmailConnect() {
             history — only the inbox messages you sync.
           </p>
         </div>
+
+        {/* Error banner */}
+        {error && (
+          <div className="border border-destructive/50 bg-destructive/10 p-3 space-y-1">
+            <p className="text-xs font-medium text-destructive">
+              {error === "token_exchange_failed" ? "Authentication failed" : error}
+            </p>
+            {detail && (
+              <p className="text-xs text-muted-foreground font-mono break-all">{detail}</p>
+            )}
+          </div>
+        )}
 
         {/* Connect button */}
         <a

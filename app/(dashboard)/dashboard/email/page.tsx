@@ -5,12 +5,17 @@ import { createClient } from "@/lib/supabase/server";
 import { EmailClient } from "@/components/email/email-client";
 import { GmailConnect } from "@/components/email/gmail-connect";
 
-export default async function EmailPage() {
+export default async function EmailPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string; detail?: string; connected?: string }>;
+}) {
   const gmailToken = await getSetting("gmail_refresh_token");
   const isConnected = !!gmailToken;
 
   if (!isConnected) {
-    return <GmailConnect />;
+    const params = await searchParams;
+    return <GmailConnect error={params.error} detail={params.detail} />;
   }
 
   const supabase = await createClient();
