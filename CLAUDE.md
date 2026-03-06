@@ -195,6 +195,17 @@ Must be enabled in GCP Library for the project. Go to: APIs & Services → Libra
 - If `token_exchange_failed`: check that `GOOGLE_CLIENT_SECRET` in Vercel matches an **Enabled** secret in GCP OAuth client. GCP console → Credentials → Web client 1 → Client secrets section. There may be multiple secrets — Vercel must have the correct active one.
 - After updating Vercel env vars, manually redeploy (env changes don't auto-deploy)
 
+## Site Password Protection
+
+The entire site is protected by a password gate (middleware.ts).
+
+- **Password:** set via `SITE_PASSWORD` env var (Vercel + `.env.local`)
+- **Cookie:** `prdcr_auth=authenticated`, httpOnly, 30-day expiry
+- **Login page:** `/login` — matches glass morphism design, redirects to original destination after auth
+- **Login API:** `POST /api/auth/login` — verifies password, sets cookie
+- **Bypassed routes:** `/login`, `/api/auth/login`, `/api/auth/google/*`, `/api/auth/gmail/*`, `/_next/*`
+- Google OAuth callbacks are excluded so Gmail/Calendar connect still works without being logged in
+
 ## DB Migration
 
 Run `supabase/email-migration.sql` in Supabase SQL editor to create `emails` and `email_task_suggestions` tables. The main schema is in `supabase/schema.sql`.
@@ -207,6 +218,7 @@ Run `supabase/email-migration.sql` in Supabase SQL editor to create `emails` and
 - Notes & Briefs (AI generation, PDF/DOCX export, email via Resend)
 - Email hub (Gmail OAuth, sync, thread view, AI compose, smart inserts, task queue, tone analysis, phase signals, date conflict detection)
 - Collapsible sidebar with mobile nav drawer
+- Site-wide password protection (middleware + `/login` page)
 
 ### Not built
 - Team collaboration (sidebar item is disabled)
