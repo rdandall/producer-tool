@@ -298,3 +298,61 @@ export async function changeSitePasswordAction(
   await setSetting("site_password", newPassword.trim());
   revalidatePath("/dashboard/settings");
 }
+
+/** Set the number of emails to fetch per sync (10–500). */
+export async function setEmailSyncLimitAction(limit: number): Promise<void> {
+  if (limit < 10 || limit > 500) throw new Error("Limit must be between 10 and 500");
+  await setSetting("email_sync_limit", String(limit));
+  revalidatePath("/dashboard/settings");
+}
+
+/** Set the default document type for new notes. */
+export async function setNoteDefaultTypeAction(type: string): Promise<void> {
+  const validTypes = ["brief", "meeting-notes", "project-notes", "client-brief"];
+  if (!validTypes.includes(type)) throw new Error("Invalid document type");
+  await setSetting("note_default_type", type);
+  revalidatePath("/dashboard/settings");
+}
+
+/** Set the Resend "from" address for note email exports. */
+export async function setEmailFromAddressAction(address: string): Promise<void> {
+  if (!address.trim()) throw new Error("Email address is required");
+  await setSetting("email_from_address", address.trim());
+  revalidatePath("/dashboard/settings");
+}
+
+/** Save the AI writing style note. */
+export async function saveStyleNoteAction(note: string): Promise<void> {
+  await setSetting("gmail_style_note", note.trim());
+  revalidatePath("/dashboard/settings");
+}
+
+/** Clear the Gmail AI tone profile (forces re-analysis next time). */
+export async function clearToneProfileAction(): Promise<void> {
+  await Promise.all([
+    setSetting("gmail_tone_profile", ""),
+    setSetting("gmail_tone_sample_count", ""),
+  ]);
+  revalidatePath("/dashboard/settings");
+}
+
+/** Disconnect Gmail by clearing all stored tokens. */
+export async function disconnectGmailAction(): Promise<void> {
+  await Promise.all([
+    setSetting("gmail_access_token", ""),
+    setSetting("gmail_refresh_token", ""),
+    setSetting("gmail_token_expiry", ""),
+    setSetting("gmail_user_email", ""),
+  ]);
+  revalidatePath("/dashboard", "layout");
+}
+
+/** Disconnect Google Calendar by clearing all stored tokens. */
+export async function disconnectCalendarAction(): Promise<void> {
+  await Promise.all([
+    setSetting("google_access_token", ""),
+    setSetting("google_refresh_token", ""),
+    setSetting("google_token_expiry", ""),
+  ]);
+  revalidatePath("/dashboard", "layout");
+}

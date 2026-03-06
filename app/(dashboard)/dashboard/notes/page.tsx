@@ -1,9 +1,15 @@
 import { getAllNotes } from "@/lib/db/notes";
 import { getProjects } from "@/lib/db/projects";
+import { getSetting } from "@/lib/db/settings";
 import { NotesClient } from "@/components/notes/notes-client";
+import type { NoteType } from "@/lib/db/notes";
 
 export default async function NotesPage() {
-  const [notes, projects] = await Promise.all([getAllNotes(), getProjects()]);
+  const [notes, projects, defaultDocType] = await Promise.all([
+    getAllNotes(),
+    getProjects(),
+    getSetting("note_default_type"),
+  ]);
 
   return (
     <NotesClient
@@ -13,6 +19,7 @@ export default async function NotesPage() {
         title: p.title,
         client: p.client,
       }))}
+      defaultDocType={(defaultDocType as NoteType) ?? "brief"}
     />
   );
 }

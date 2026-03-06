@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getSetting } from "@/lib/db/settings";
 
 function markdownToHtmlEmail(markdown: string): string {
   let html = markdown
@@ -119,7 +120,7 @@ export async function POST(req: NextRequest) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: process.env.RESEND_FROM_EMAIL ?? "PRDCR <noreply@prdcr.co>",
+        from: await getSetting("email_from_address") ?? process.env.RESEND_FROM_EMAIL ?? "PRDCR <noreply@prdcr.co>",
         to: [to],
         subject: emailSubject,
         html: emailHtml,

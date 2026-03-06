@@ -2,34 +2,240 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { LogOut, ShieldOff, KeyRound, Loader2 } from "lucide-react";
+import {
+  LogOut,
+  ShieldOff,
+  KeyRound,
+  Loader2,
+  Mail,
+  FileText,
+  Sparkles,
+  Unlink,
+  RotateCcw,
+} from "lucide-react";
 import {
   invalidateAllSessionsAction,
   changeSitePasswordAction,
+  setEmailSyncLimitAction,
+  setNoteDefaultTypeAction,
+  setEmailFromAddressAction,
+  saveStyleNoteAction,
+  clearToneProfileAction,
+  disconnectGmailAction,
+  disconnectCalendarAction,
 } from "@/app/actions";
+
+type NoteType = "brief" | "meeting-notes" | "project-notes" | "client-brief";
+
+const NOTE_TYPE_OPTIONS: { value: NoteType; label: string }[] = [
+  { value: "brief",         label: "Edit Brief" },
+  { value: "meeting-notes", label: "Meeting Notes" },
+  { value: "project-notes", label: "Project Notes" },
+  { value: "client-brief",  label: "Client Brief" },
+];
 
 interface Props {
   sessionVersion: number;
   hasDbPassword: boolean;
+  gmailConnected: boolean;
+  gmailEmail: string;
+  calendarConnected: boolean;
+  hasToneProfile: boolean;
+  toneSampleCount: number;
+  styleNote: string;
+  emailSyncLimit: number;
+  noteDefaultType: NoteType;
+  emailFromAddress: string;
 }
 
-export function SettingsClient({ sessionVersion, hasDbPassword }: Props) {
-  // ── Kick everyone state ────────────────────────────────────────────────
+// ── Section wrapper ─────────────────────────────────────────────────────────
+function Section({
+  icon: Icon,
+  title,
+  children,
+}: {
+  icon: React.ElementType;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="border border-border/50 bg-sidebar-accent/20 p-5 space-y-4">
+      <div className="flex items-center gap-2">
+        <Icon className="w-4 h-4 text-muted-foreground" />
+        <h2 className="text-sm font-semibold">{title}</h2>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// ── Field wrapper ────────────────────────────────────────────────────────────
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1">
+      <label className="text-xs text-muted-foreground uppercase tracking-widest block">
+        {label}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+export function SettingsClient({
+  sessionVersion,
+  hasDbPassword,
+  gmailConnected,
+  gmailEmail,
+  calendarConnected,
+  hasToneProfile,
+  toneSampleCount,
+  styleNote: initialStyleNote,
+  emailSyncLimit: initialSyncLimit,
+  noteDefaultType: initialNoteDefaultType,
+  emailFromAddress: initialFromAddress,
+}: Props) {
+
+  // ── Connections state ──────────────────────────────────────────────────
+  const [gmailLoading, setGmailLoading] = useState(false);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [gmailIsConnected, setGmailIsConnected] = useState(gmailConnected);
+  const [calendarIsConnected, setCalendarIsConnected] = useState(calendarConnected);
+
+  // ── Email & AI state ───────────────────────────────────────────────────
+  const [syncLimit, setSyncLimit] = useState(String(initialSyncLimit));
+  const [syncLimitLoading, setSyncLimitLoading] = useState(false);
+  const [styleNote, setStyleNote] = useState(initialStyleNote);
+  const [styleNoteLoading, setStyleNoteLoading] = useState(false);
+  const [toneProfileExists, setToneProfileExists] = useState(hasToneProfile);
+  const [clearToneLoading, setClearToneLoading] = useState(false);
+
+  // ── Notes & Briefs state ───────────────────────────────────────────────
+  const [noteDefaultType, setNoteDefaultType] = useState<NoteType>(initialNoteDefaultType);
+  const [noteTypeLoading, setNoteTypeLoading] = useState(false);
+  const [fromAddress, setFromAddress] = useState(initialFromAddress);
+  const [fromAddressLoading, setFromAddressLoading] = useState(false);
+
+  // ── Access & Security state ────────────────────────────────────────────
   const [kickModalOpen, setKickModalOpen] = useState(false);
   const [kickPassword, setKickPassword] = useState("");
   const [kickLoading, setKickLoading] = useState(false);
   const [kickError, setKickError] = useState("");
 
-  // ── Change password state ──────────────────────────────────────────────
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
   const [pwLoading, setPwLoading] = useState(false);
   const [pwError, setPwError] = useState("");
 
-  // ── Log out (self only) ────────────────────────────────────────────────
   const [logoutLoading, setLogoutLoading] = useState(false);
 
+  // ── Connections handlers ───────────────────────────────────────────────
+  async function handleDisconnectGmail() {
+    if (!confirm("Disconnect Gmail? You'll need to re-authenticate to use email features.")) return;
+    setGmailLoading(true);
+    try {
+      await disconnectGmailAction();
+      setGmailIsConnected(false);
+      toast.success("Gmail disconnected");
+    } catch {
+      toast.error("Failed to disconnect Gmail");
+    } finally {
+      setGmailLoading(false);
+    }
+  }
+
+  async function handleDisconnectCalendar() {
+    if (!confirm("Disconnect Google Calendar? You'll need to re-authenticate to use calendar features.")) return;
+    setCalendarLoading(true);
+    try {
+      await disconnectCalendarAction();
+      setCalendarIsConnected(false);
+      toast.success("Google Calendar disconnected");
+    } catch {
+      toast.error("Failed to disconnect Calendar");
+    } finally {
+      setCalendarLoading(false);
+    }
+  }
+
+  // ── Email & AI handlers ────────────────────────────────────────────────
+  async function handleSaveSyncLimit(e: React.FormEvent) {
+    e.preventDefault();
+    const val = parseInt(syncLimit, 10);
+    if (isNaN(val) || val < 10 || val > 500) {
+      toast.error("Enter a number between 10 and 500");
+      return;
+    }
+    setSyncLimitLoading(true);
+    try {
+      await setEmailSyncLimitAction(val);
+      toast.success("Sync limit saved");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSyncLimitLoading(false);
+    }
+  }
+
+  async function handleSaveStyleNote(e: React.FormEvent) {
+    e.preventDefault();
+    setStyleNoteLoading(true);
+    try {
+      await saveStyleNoteAction(styleNote);
+      toast.success("Style note saved");
+    } catch {
+      toast.error("Failed to save style note");
+    } finally {
+      setStyleNoteLoading(false);
+    }
+  }
+
+  async function handleClearToneProfile() {
+    if (!confirm("Clear the tone profile? AI will re-learn your style after the next tone analysis.")) return;
+    setClearToneLoading(true);
+    try {
+      await clearToneProfileAction();
+      setToneProfileExists(false);
+      toast.success("Tone profile cleared");
+    } catch {
+      toast.error("Failed to clear tone profile");
+    } finally {
+      setClearToneLoading(false);
+    }
+  }
+
+  // ── Notes & Briefs handlers ────────────────────────────────────────────
+  async function handleSaveNoteType(type: NoteType) {
+    setNoteDefaultType(type);
+    setNoteTypeLoading(true);
+    try {
+      await setNoteDefaultTypeAction(type);
+      toast.success("Default document type saved");
+    } catch {
+      toast.error("Failed to save document type");
+    } finally {
+      setNoteTypeLoading(false);
+    }
+  }
+
+  async function handleSaveFromAddress(e: React.FormEvent) {
+    e.preventDefault();
+    if (!fromAddress.trim()) {
+      toast.error("Enter an email address");
+      return;
+    }
+    setFromAddressLoading(true);
+    try {
+      await setEmailFromAddressAction(fromAddress);
+      toast.success("From address saved");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setFromAddressLoading(false);
+    }
+  }
+
+  // ── Access & Security handlers ─────────────────────────────────────────
   async function handleLogout() {
     setLogoutLoading(true);
     await fetch("/api/auth/logout", { method: "POST" });
@@ -43,9 +249,7 @@ export function SettingsClient({ sessionVersion, hasDbPassword }: Props) {
     try {
       await invalidateAllSessionsAction(kickPassword);
       toast.success("All sessions invalidated. Signing you out...");
-      setTimeout(() => {
-        window.location.href = "/login";
-      }, 1200);
+      setTimeout(() => { window.location.href = "/login"; }, 1200);
     } catch (err) {
       setKickError(err instanceof Error ? err.message : "Failed");
       setKickLoading(false);
@@ -55,21 +259,13 @@ export function SettingsClient({ sessionVersion, hasDbPassword }: Props) {
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault();
     setPwError("");
-    if (newPw !== confirmPw) {
-      setPwError("New passwords do not match");
-      return;
-    }
-    if (newPw.length < 4) {
-      setPwError("Password must be at least 4 characters");
-      return;
-    }
+    if (newPw !== confirmPw) { setPwError("New passwords do not match"); return; }
+    if (newPw.length < 4) { setPwError("Password must be at least 4 characters"); return; }
     setPwLoading(true);
     try {
       await changeSitePasswordAction(currentPw, newPw);
       toast.success("Password changed successfully");
-      setCurrentPw("");
-      setNewPw("");
-      setConfirmPw("");
+      setCurrentPw(""); setNewPw(""); setConfirmPw("");
     } catch (err) {
       setPwError(err instanceof Error ? err.message : "Failed");
     } finally {
@@ -77,136 +273,301 @@ export function SettingsClient({ sessionVersion, hasDbPassword }: Props) {
     }
   }
 
+  // ── Shared class helpers ───────────────────────────────────────────────
+  const inputCls = "w-full bg-transparent border border-border px-3 py-2 text-sm outline-none focus:border-foreground transition-colors";
+  const saveBtnCls = "flex items-center gap-2 px-4 py-2 text-xs font-medium bg-foreground text-background hover:opacity-90 transition-opacity disabled:opacity-40";
+
   return (
     <div className="space-y-4">
-      {/* ── Session Management ─────────────────────────────────────────── */}
-      <div className="border border-border/50 bg-sidebar-accent/20 p-5 space-y-4">
-        <div className="flex items-center gap-2">
-          <ShieldOff className="w-4 h-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">Session Management</h2>
-        </div>
-        <div className="text-xs text-muted-foreground space-y-1">
-          <p>
-            Active session token:{" "}
-            <span className="font-mono text-foreground">v{sessionVersion}</span>
-          </p>
-          <p>
-            Invalidating sessions signs out{" "}
-            <span className="font-medium text-foreground">everyone</span>,
-            including you. You can immediately log back in with the same
-            password.
-          </p>
-        </div>
 
-        <div className="flex items-center gap-3 flex-wrap">
-          <button
-            onClick={() => {
-              setKickModalOpen(true);
-              setKickPassword("");
-              setKickError("");
-            }}
-            className="flex items-center gap-2 px-3 py-2 text-xs font-medium border border-destructive/60 text-destructive hover:bg-destructive/10 transition-colors"
-          >
-            <ShieldOff className="w-3.5 h-3.5" />
-            Invalidate All Sessions
-          </button>
-
-          <button
-            onClick={handleLogout}
-            disabled={logoutLoading}
-            className="flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border/50 text-muted-foreground hover:text-foreground hover:border-border transition-colors disabled:opacity-50"
-          >
-            {logoutLoading ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+      {/* ── 1. Connections ──────────────────────────────────────────────── */}
+      <Section icon={Mail} title="Connections">
+        <div className="space-y-4">
+          {/* Gmail */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-medium text-foreground">Gmail</p>
+              {gmailIsConnected
+                ? <p className="text-xs text-muted-foreground mt-0.5">{gmailEmail || "Connected"}</p>
+                : <p className="text-xs text-muted-foreground/50 mt-0.5">Not connected</p>
+              }
+            </div>
+            {gmailIsConnected ? (
+              <button
+                onClick={handleDisconnectGmail}
+                disabled={gmailLoading}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-border/50 text-muted-foreground hover:text-destructive hover:border-destructive/60 transition-colors disabled:opacity-40"
+              >
+                {gmailLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Unlink className="w-3 h-3" />}
+                Disconnect
+              </button>
             ) : (
-              <LogOut className="w-3.5 h-3.5" />
+              <a
+                href="/api/auth/gmail"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-primary/50 text-primary hover:bg-primary/5 transition-colors"
+              >
+                Connect
+              </a>
             )}
-            Log Out
-          </button>
+          </div>
+
+          <div className="border-t border-border/30" />
+
+          {/* Google Calendar */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-medium text-foreground">Google Calendar</p>
+              {calendarIsConnected
+                ? <p className="text-xs text-muted-foreground mt-0.5">Connected</p>
+                : <p className="text-xs text-muted-foreground/50 mt-0.5">Not connected</p>
+              }
+            </div>
+            {calendarIsConnected ? (
+              <button
+                onClick={handleDisconnectCalendar}
+                disabled={calendarLoading}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-border/50 text-muted-foreground hover:text-destructive hover:border-destructive/60 transition-colors disabled:opacity-40"
+              >
+                {calendarLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Unlink className="w-3 h-3" />}
+                Disconnect
+              </button>
+            ) : (
+              <a
+                href="/api/auth/google"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-primary/50 text-primary hover:bg-primary/5 transition-colors"
+              >
+                Connect
+              </a>
+            )}
+          </div>
         </div>
-      </div>
+      </Section>
 
-      {/* ── Change Password ────────────────────────────────────────────── */}
-      <div className="border border-border/50 bg-sidebar-accent/20 p-5 space-y-4">
-        <div className="flex items-center gap-2">
-          <KeyRound className="w-4 h-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">Site Password</h2>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Change the password required to access PRDCR.
-          {!hasDbPassword && (
-            <span className="block mt-1 text-muted-foreground/70">
-              Currently using the password set via environment variable.
-            </span>
-          )}
-        </p>
+      {/* ── 2. Email & AI ───────────────────────────────────────────────── */}
+      <Section icon={Sparkles} title="Email & AI">
 
-        <form onSubmit={handleChangePassword} className="space-y-3 max-w-sm">
-          <div className="space-y-1">
-            <label className="text-xs text-muted-foreground uppercase tracking-widest">
-              Current Password
-            </label>
-            <input
-              type="password"
-              value={currentPw}
-              onChange={(e) => setCurrentPw(e.target.value)}
-              autoComplete="current-password"
-              className="w-full bg-transparent border border-border px-3 py-2 text-sm outline-none focus:border-foreground transition-colors"
-              placeholder="••••••••"
+        {/* Sync limit */}
+        <form onSubmit={handleSaveSyncLimit} className="space-y-2">
+          <Field label="Emails synced per refresh">
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={10}
+                max={500}
+                value={syncLimit}
+                onChange={(e) => setSyncLimit(e.target.value)}
+                className="w-24 bg-transparent border border-border px-3 py-2 text-sm outline-none focus:border-foreground transition-colors"
+              />
+              <button type="submit" disabled={syncLimitLoading} className={saveBtnCls}>
+                {syncLimitLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                Save
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground/50 mt-1">
+              10–500. Higher values take longer to sync.
+            </p>
+          </Field>
+        </form>
+
+        <div className="border-t border-border/30" />
+
+        {/* Style note */}
+        <form onSubmit={handleSaveStyleNote} className="space-y-2">
+          <Field label="Writing style note">
+            <textarea
+              value={styleNote}
+              onChange={(e) => setStyleNote(e.target.value)}
+              rows={3}
+              placeholder="e.g. Keep replies concise and direct. Use first names. Avoid corporate jargon."
+              className={`${inputCls} resize-none font-mono text-xs`}
             />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs text-muted-foreground uppercase tracking-widest">
-              New Password
-            </label>
-            <input
-              type="password"
-              value={newPw}
-              onChange={(e) => setNewPw(e.target.value)}
-              autoComplete="new-password"
-              className="w-full bg-transparent border border-border px-3 py-2 text-sm outline-none focus:border-foreground transition-colors"
-              placeholder="••••••••"
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs text-muted-foreground uppercase tracking-widest">
-              Confirm New Password
-            </label>
-            <input
-              type="password"
-              value={confirmPw}
-              onChange={(e) => setConfirmPw(e.target.value)}
-              autoComplete="new-password"
-              className="w-full bg-transparent border border-border px-3 py-2 text-sm outline-none focus:border-foreground transition-colors"
-              placeholder="••••••••"
-            />
-          </div>
-
-          {pwError && (
-            <p className="text-xs text-destructive">{pwError}</p>
-          )}
-
-          <button
-            type="submit"
-            disabled={pwLoading || !currentPw || !newPw || !confirmPw}
-            className="flex items-center gap-2 px-4 py-2 text-xs font-medium bg-foreground text-background hover:opacity-90 transition-opacity disabled:opacity-40"
-          >
-            {pwLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-            Change Password
+          </Field>
+          <p className="text-xs text-muted-foreground/50">
+            Included in every AI reply draft as additional context about your voice.
+          </p>
+          <button type="submit" disabled={styleNoteLoading} className={saveBtnCls}>
+            {styleNoteLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            Save Style Note
           </button>
         </form>
-      </div>
+
+        <div className="border-t border-border/30" />
+
+        {/* Tone profile */}
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-medium text-foreground">AI Tone Profile</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {toneProfileExists
+                ? `Learned from ${toneSampleCount > 0 ? `${toneSampleCount} sent emails` : "your sent history"}.`
+                : "No tone profile yet. Run tone analysis from the email compose panel."}
+            </p>
+          </div>
+          {toneProfileExists && (
+            <button
+              onClick={handleClearToneProfile}
+              disabled={clearToneLoading}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-border/50 text-muted-foreground hover:text-destructive hover:border-destructive/60 transition-colors disabled:opacity-40 shrink-0"
+            >
+              {clearToneLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+              Clear
+            </button>
+          )}
+        </div>
+      </Section>
+
+      {/* ── 3. Notes & Briefs ───────────────────────────────────────────── */}
+      <Section icon={FileText} title="Notes & Briefs">
+
+        {/* Default doc type */}
+        <Field label="Default document type">
+          <div className="flex flex-wrap gap-1.5">
+            {NOTE_TYPE_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => handleSaveNoteType(opt.value)}
+                disabled={noteTypeLoading}
+                className={`px-3 py-1.5 text-xs border transition-colors disabled:opacity-50 ${
+                  noteDefaultType === opt.value
+                    ? "border-primary text-primary bg-primary/5"
+                    : "border-border/50 text-muted-foreground hover:text-foreground hover:border-border"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground/50 mt-2">
+            Pre-selected when you open Notes &amp; Briefs.
+          </p>
+        </Field>
+
+        <div className="border-t border-border/30" />
+
+        {/* Email from address */}
+        <form onSubmit={handleSaveFromAddress} className="space-y-2">
+          <Field label='Email "From" address'>
+            <input
+              type="text"
+              value={fromAddress}
+              onChange={(e) => setFromAddress(e.target.value)}
+              placeholder="e.g. PRDCR <noreply@prdcr.co>"
+              className={inputCls}
+            />
+          </Field>
+          <p className="text-xs text-muted-foreground/50">
+            Sender shown when you email a note via Resend. Leave blank to use the{" "}
+            <code className="font-mono text-[10px]">RESEND_FROM_EMAIL</code> env var.
+          </p>
+          <button type="submit" disabled={fromAddressLoading} className={saveBtnCls}>
+            {fromAddressLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            Save
+          </button>
+        </form>
+      </Section>
+
+      {/* ── 4. Access & Security ────────────────────────────────────────── */}
+      <Section icon={ShieldOff} title="Access & Security">
+
+        {/* Session management */}
+        <div className="space-y-3">
+          <div className="text-xs text-muted-foreground space-y-1">
+            <p>
+              Active session token:{" "}
+              <span className="font-mono text-foreground">v{sessionVersion}</span>
+            </p>
+            <p>
+              Invalidating sessions signs out{" "}
+              <span className="font-medium text-foreground">everyone</span>,
+              including you. You can log back in immediately.
+            </p>
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              onClick={() => { setKickModalOpen(true); setKickPassword(""); setKickError(""); }}
+              className="flex items-center gap-2 px-3 py-2 text-xs font-medium border border-destructive/60 text-destructive hover:bg-destructive/10 transition-colors"
+            >
+              <ShieldOff className="w-3.5 h-3.5" />
+              Invalidate All Sessions
+            </button>
+            <button
+              onClick={handleLogout}
+              disabled={logoutLoading}
+              className="flex items-center gap-2 px-3 py-2 text-xs font-medium border border-border/50 text-muted-foreground hover:text-foreground hover:border-border transition-colors disabled:opacity-50"
+            >
+              {logoutLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <LogOut className="w-3.5 h-3.5" />}
+              Log Out
+            </button>
+          </div>
+        </div>
+
+        <div className="border-t border-border/30" />
+
+        {/* Change password */}
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <KeyRound className="w-3.5 h-3.5 text-muted-foreground" />
+            <p className="text-xs font-semibold">Site Password</p>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Change the password required to access PRDCR.
+            {!hasDbPassword && (
+              <span className="block mt-1 text-muted-foreground/60">
+                Currently using the password set via environment variable.
+              </span>
+            )}
+          </p>
+          <form onSubmit={handleChangePassword} className="space-y-3 max-w-sm">
+            <Field label="Current Password">
+              <input
+                type="password"
+                value={currentPw}
+                onChange={(e) => setCurrentPw(e.target.value)}
+                autoComplete="current-password"
+                className={inputCls}
+                placeholder="••••••••"
+              />
+            </Field>
+            <Field label="New Password">
+              <input
+                type="password"
+                value={newPw}
+                onChange={(e) => setNewPw(e.target.value)}
+                autoComplete="new-password"
+                className={inputCls}
+                placeholder="••••••••"
+              />
+            </Field>
+            <Field label="Confirm New Password">
+              <input
+                type="password"
+                value={confirmPw}
+                onChange={(e) => setConfirmPw(e.target.value)}
+                autoComplete="new-password"
+                className={inputCls}
+                placeholder="••••••••"
+              />
+            </Field>
+            {pwError && <p className="text-xs text-destructive">{pwError}</p>}
+            <button
+              type="submit"
+              disabled={pwLoading || !currentPw || !newPw || !confirmPw}
+              className={saveBtnCls}
+            >
+              {pwLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              Change Password
+            </button>
+          </form>
+        </div>
+      </Section>
 
       {/* ── Kick Everyone Modal ────────────────────────────────────────── */}
       {kickModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          {/* Backdrop */}
           <div
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
             onClick={() => !kickLoading && setKickModalOpen(false)}
           />
-
-          {/* Modal */}
           <div className="relative z-10 w-full max-w-sm border border-border bg-background p-6 space-y-5 mx-4">
             <div>
               <h3 className="text-sm font-bold">Invalidate All Sessions</h3>
@@ -217,12 +578,8 @@ export function SettingsClient({ sessionVersion, hasDbPassword }: Props) {
                 away with the same password.
               </p>
             </div>
-
             <form onSubmit={handleKickEveryone} className="space-y-3">
-              <div className="space-y-1">
-                <label className="text-xs text-muted-foreground uppercase tracking-widest">
-                  Confirm with your password
-                </label>
+              <Field label="Confirm with your password">
                 <input
                   type="password"
                   value={kickPassword}
@@ -234,11 +591,8 @@ export function SettingsClient({ sessionVersion, hasDbPassword }: Props) {
                   }`}
                   placeholder="••••••••"
                 />
-                {kickError && (
-                  <p className="text-xs text-destructive">{kickError}</p>
-                )}
-              </div>
-
+                {kickError && <p className="text-xs text-destructive mt-1">{kickError}</p>}
+              </Field>
               <div className="flex gap-2 pt-1">
                 <button
                   type="button"
@@ -253,9 +607,7 @@ export function SettingsClient({ sessionVersion, hasDbPassword }: Props) {
                   disabled={kickLoading || !kickPassword}
                   className="flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium bg-destructive text-destructive-foreground hover:opacity-90 transition-opacity disabled:opacity-40"
                 >
-                  {kickLoading && (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  )}
+                  {kickLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   Sign Everyone Out
                 </button>
               </div>

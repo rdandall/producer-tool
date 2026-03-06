@@ -20,11 +20,12 @@ interface Project {
 interface Props {
   initialNotes: Note[];
   projects: Project[];
+  defaultDocType?: NoteType;
 }
 
 type EditorState = "idle" | "generating" | "ready";
 
-export function NotesClient({ initialNotes, projects }: Props) {
+export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }: Props) {
   const [notes, setNotes] = useState<Note[]>(initialNotes);
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
   const [editorState, setEditorState] = useState<EditorState>("idle");
@@ -217,6 +218,7 @@ export function NotesClient({ initialNotes, projects }: Props) {
           projectOptions={projects}
           selectedProjectId={selectedProjectId}
           onProjectChange={setSelectedProjectId}
+          defaultDocType={defaultDocType}
         />
 
         {/* Document editor / states */}

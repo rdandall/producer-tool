@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getValidGmailToken, listInboxMessages } from "@/lib/gmail";
 import { upsertEmails } from "@/lib/db/emails";
+import { getSetting } from "@/lib/db/settings";
 
 export async function POST() {
   const token = await getValidGmailToken();
@@ -9,7 +10,10 @@ export async function POST() {
   }
 
   try {
-    const messages = await listInboxMessages(token, 50);
+    const limitStr = await getSetting("email_sync_limit");
+    const limit = parseInt(limitStr ?? "50", 10) || 50;
+
+    const messages = await listInboxMessages(token, limit);
     await upsertEmails(messages);
     return NextResponse.json({ synced: messages.length });
   } catch (err: unknown) {

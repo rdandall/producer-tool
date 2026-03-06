@@ -19,6 +19,7 @@ interface Props {
   projectOptions: { id: string; title: string; client: string | null }[];
   selectedProjectId: string | null;
   onProjectChange: (id: string | null) => void;
+  defaultDocType?: NoteType;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -30,9 +31,10 @@ export function DictationPanel({
   projectOptions,
   selectedProjectId,
   onProjectChange,
+  defaultDocType = "brief",
 }: Props) {
   const [rawInput, setRawInput] = useState("");
-  const [docType, setDocType] = useState<NoteType>("brief");
+  const [docType, setDocType] = useState<NoteType>(defaultDocType);
   const [isRecording, setIsRecording] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState("");
   const [speechSupported, setSpeechSupported] = useState(false);
