@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -e .env.local ] || { MAIN=\"../../../.env.local\"; [ -f \"$MAIN\" ] && ln -sf \"$MAIN\" .env.local; }"
+          }
+        ]
+      }
+    ]
+  }
+}
