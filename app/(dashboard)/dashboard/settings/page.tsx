@@ -37,7 +37,8 @@ export default async function SettingsPage() {
   const emailSyncLimit = parseInt(emailSyncLimitRaw ?? "50", 10) || 50;
 
   return (
-    <div className="p-6 max-w-2xl space-y-2">
+    <div className="flex-1 overflow-y-auto">
+      <div className="p-6 max-w-2xl space-y-2">
       <div className="mb-6">
         <h1 className="text-xl font-bold tracking-tight">Settings</h1>
         <p className="text-sm text-muted-foreground mt-1">
@@ -58,6 +59,7 @@ export default async function SettingsPage() {
         noteDefaultType={(noteDefaultType ?? "brief") as "brief" | "meeting-notes" | "project-notes" | "client-brief"}
         emailFromAddress={emailFromAddress ?? ""}
       />
+      </div>
     </div>
   );
 }
