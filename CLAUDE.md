@@ -158,6 +158,43 @@ RESEND_API_KEY=             # for Notes email export
 RESEND_FROM_EMAIL=          # e.g. "PRDCR <noreply@prdcr.app>"
 ```
 
+## Google OAuth Credentials (IMPORTANT)
+
+**GCP Project:** `arboreal-cat-488604-p4` ("My First Project"), project number `307153217811`
+**OAuth Client:** "Web client 1" — `307153217811-qaimc651o79mlqcsj61gn8lvibdqt6d1.apps.googleusercontent.com`
+
+These are the ONLY valid credentials. If you ever see `897111560685-...` anywhere, that is a stale/wrong client ID — replace it.
+
+### Vercel production env vars
+The `.env.local` file is for local dev only. Vercel has its own separate env var store:
+`https://vercel.com/rdandalls-projects/producer-tool/settings/environment-variables`
+
+**Critical:** After updating any env var in Vercel, you MUST trigger a manual redeploy — env var changes do NOT auto-deploy. Go to Deployments → `...` on the latest → Redeploy.
+
+### Authorized redirect URIs (registered in GCP OAuth client)
+- `https://magical-shockley.vercel.app/api/google/callback` (legacy)
+- `http://localhost:3000/api/auth/google/callback`
+- `http://localhost:3000/api/auth/gmail/callback`
+- `https://prdcr.app/api/auth/gmail/callback`
+- `https://prdcr.app/api/auth/google/callback`
+- `https://www.prdcr.app/api/auth/gmail/callback`
+- `https://www.prdcr.app/api/auth/google/callback`
+
+**Note:** Vercel routes traffic through `www.prdcr.app` so BOTH the bare domain and www variants must be registered. The `host` header the app sees is `www.prdcr.app`.
+
+### Authorized JS origins (registered in GCP OAuth client)
+- `http://localhost:3000`
+- `https://prdcr.app`
+
+### Gmail API
+Must be enabled in GCP Library for the project. Go to: APIs & Services → Library → search "Gmail API" → Enable.
+
+### OAuth Debugging
+- GmailConnect component accepts `error` and `detail` props — shown as a banner when OAuth fails
+- Callback route (`app/api/auth/gmail/callback/route.ts`) passes the actual Google error message as `?detail=` in the redirect URL
+- If `token_exchange_failed`: check that `GOOGLE_CLIENT_SECRET` in Vercel matches an **Enabled** secret in GCP OAuth client. GCP console → Credentials → Web client 1 → Client secrets section. There may be multiple secrets — Vercel must have the correct active one.
+- After updating Vercel env vars, manually redeploy (env changes don't auto-deploy)
+
 ## DB Migration
 
 Run `supabase/email-migration.sql` in Supabase SQL editor to create `emails` and `email_task_suggestions` tables. The main schema is in `supabase/schema.sql`.
