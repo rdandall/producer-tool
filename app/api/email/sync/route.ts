@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getValidGmailToken, listInboxMessages } from "@/lib/gmail";
-import { upsertEmails } from "@/lib/db/emails";
+import { upsertEmails, getAllEmails } from "@/lib/db/emails";
 import { getSetting } from "@/lib/db/settings";
 
 export async function POST() {
@@ -15,7 +15,10 @@ export async function POST() {
 
     const messages = await listInboxMessages(token, limit);
     await upsertEmails(messages);
-    return NextResponse.json({ synced: messages.length });
+
+    // Return fresh email list so client can update state without a page reload
+    const emails = await getAllEmails();
+    return NextResponse.json({ synced: messages.length, emails });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Sync failed";
     console.error("Email sync error:", err);

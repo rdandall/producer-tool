@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { toast } from "sonner";
 import type { StoredEmail, EmailTaskSuggestion } from "@/lib/db/emails";
 import {
@@ -198,33 +198,50 @@ export function EmailClient({
     [emails, selectedThreadId]
   );
 
-  const handleSync = useCallback(async () => {
+  const handleSync = useCallback(async (silent = false) => {
     setIsSyncing(true);
     try {
       const res = await fetch("/api/email/sync", { method: "POST" });
       if (!res.ok) throw new Error("Sync failed");
-      const { synced } = await res.json();
+      const { synced, emails: freshEmails } = await res.json();
 
-      // Refresh emails from server
-      const refreshRes = await fetch("/dashboard/email", {
-        headers: { Accept: "application/json" },
-      });
+      // Update state in-place — no page reload needed
+      if (freshEmails) setEmails(freshEmails);
 
-      // Re-fetch by navigating — simplest approach is to reload the email list
-      // We'll use window.location.reload() as a simple refresh mechanism
-      if (synced > 0) {
-        toast.success(`Synced ${synced} emails`);
-        // Reload page to get fresh data
-        window.location.reload();
-      } else {
-        toast.info("Inbox is up to date");
+      if (!silent) {
+        if (synced > 0) {
+          toast.success(`Synced ${synced} new email${synced !== 1 ? "s" : ""}`);
+        } else {
+          toast.info("Inbox is up to date");
+        }
+      } else if (synced > 0) {
+        toast.success(`${synced} new email${synced !== 1 ? "s" : ""}`, { id: "bg-sync" });
       }
     } catch {
-      toast.error("Sync failed — check your Gmail connection");
+      if (!silent) toast.error("Sync failed — check your Gmail connection");
     } finally {
       setIsSyncing(false);
     }
   }, []);
+
+  // Auto-sync on mount (rate-limited to once per 60s via sessionStorage)
+  useEffect(() => {
+    const key = "prdcr-email-last-sync";
+    const last = sessionStorage.getItem(key);
+    const now = Date.now();
+    if (!last || now - parseInt(last) > 60_000) {
+      sessionStorage.setItem(key, String(now));
+      handleSync(true);
+    }
+  }, [handleSync]);
+
+  // Periodic background sync every 2 minutes (only when tab is visible)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!document.hidden) handleSync(true);
+    }, 120_000);
+    return () => clearInterval(interval);
+  }, [handleSync]);
 
   const handleSelectThread = useCallback(
     (threadId: string) => {
