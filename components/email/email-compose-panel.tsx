@@ -1,8 +1,9 @@
 "use client";
 
 import { useRef, useState, useCallback } from "react";
-import { Send, Zap, X, Settings, Loader2 } from "lucide-react";
+import { Send, Zap, X, Settings, Loader2, Bold, Italic, Underline, Link, List, Edit3 } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import type { StoredEmail } from "@/lib/db/emails";
 import { ResponseVariants, type VariantType, type Variants } from "./response-variants";
 import { SmartInsertsSidebar } from "./smart-inserts-sidebar";
@@ -55,6 +56,8 @@ interface EmailComposePanelProps {
 
 const EMPTY_VARIANTS: Variants = { punchy: "", balanced: "", detailed: "" };
 
+type ComposeMode = "ai" | "manual";
+
 export function EmailComposePanel({
   threadMessages,
   projects,
@@ -65,6 +68,7 @@ export function EmailComposePanel({
   onPhaseSignal,
   onMentionedDates,
 }: EmailComposePanelProps) {
+  const [composeMode, setComposeMode] = useState<ComposeMode>("ai");
   const [variants, setVariants] = useState<Variants>(EMPTY_VARIANTS);
   const [smartInserts, setSmartInserts] = useState<SmartInsert[]>([]);
   const [activeVariant, setActiveVariant] = useState<VariantType>("balanced");
@@ -73,6 +77,9 @@ export function EmailComposePanel({
   const [isSending, setIsSending] = useState(false);
   const [showStyleNote, setShowStyleNote] = useState(false);
   const [styleNote, setStyleNote] = useState("");
+
+  // Rich text editor ref (manual mode)
+  const editorRef = useRef<HTMLDivElement>(null);
 
   // insertRef is passed to ResponseVariants to expose the cursor-aware insert function
   const insertRef = useRef<((text: string) => void) | null>(null);
@@ -129,7 +136,7 @@ export function EmailComposePanel({
       if (data.mentionedDates?.length) {
         onMentionedDates(data.mentionedDates);
       }
-    } catch (err) {
+    } catch {
       toast.error("Failed to generate response. Try again.");
     } finally {
       setGenerating(false);
@@ -174,8 +181,12 @@ export function EmailComposePanel({
   }
 
   async function handleSend() {
-    const body = variants[activeVariant];
-    if (!body.trim()) {
+    const isManual = composeMode === "manual";
+    const emailBody = isManual
+      ? (editorRef.current?.innerHTML ?? "")
+      : variants[activeVariant];
+
+    if (!emailBody.trim() || emailBody === "<br>") {
       toast.error("Write or generate a reply first.");
       return;
     }
@@ -191,15 +202,16 @@ export function EmailComposePanel({
         body: JSON.stringify({
           to: latestMsg.from_email,
           subject: latestMsg.subject,
-          emailBody: body,
+          emailBody,
           threadId: latestMsg.gmail_thread_id,
+          isHtml: isManual,
         }),
       });
 
       if (!res.ok) throw new Error("Send failed");
       toast.success("Reply sent");
       onClose();
-    } catch (err) {
+    } catch {
       toast.error("Failed to send. Check your Gmail connection.");
     } finally {
       setIsSending(false);
@@ -214,6 +226,17 @@ export function EmailComposePanel({
     });
     toast.success("Style note saved");
     setShowStyleNote(false);
+  }
+
+  // Rich text formatting commands
+  function execFormat(command: string, value?: string) {
+    document.execCommand(command, false, value ?? undefined);
+    editorRef.current?.focus();
+  }
+
+  function handleLink() {
+    const url = prompt("Enter URL:");
+    if (url) execFormat("createLink", url);
   }
 
   const hasVariants = variants.punchy || variants.balanced || variants.detailed;
@@ -246,6 +269,34 @@ export function EmailComposePanel({
             <X className="w-4 h-4" />
           </button>
         </div>
+      </div>
+
+      {/* Mode toggle */}
+      <div className="flex border-b border-border shrink-0">
+        <button
+          onClick={() => setComposeMode("ai")}
+          className={cn(
+            "flex items-center gap-1.5 px-4 py-2 text-xs border-b-2 -mb-px transition-colors",
+            composeMode === "ai"
+              ? "border-primary text-foreground font-medium"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <Zap className="w-3 h-3" />
+          AI Reply
+        </button>
+        <button
+          onClick={() => setComposeMode("manual")}
+          className={cn(
+            "flex items-center gap-1.5 px-4 py-2 text-xs border-b-2 -mb-px transition-colors",
+            composeMode === "manual"
+              ? "border-primary text-foreground font-medium"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <Edit3 className="w-3 h-3" />
+          Write Manually
+        </button>
       </div>
 
       {/* Style note editor (collapsible) */}
@@ -302,62 +353,130 @@ export function EmailComposePanel({
         </div>
       )}
 
-      {/* Main content */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-5">
-        {/* Generate button */}
-        {!hasVariants && !generating && (
-          <button
-            onClick={handleGenerate}
-            className="w-full flex items-center justify-center gap-2 py-3 text-sm font-medium bg-foreground text-background hover:opacity-90 transition-opacity"
-          >
-            <Zap className="w-4 h-4" />
-            Generate reply variants
-          </button>
-        )}
+      {/* ── AI MODE ── */}
+      {composeMode === "ai" && (
+        <div className="flex-1 overflow-y-auto p-4 space-y-5">
+          {/* Generate button */}
+          {!hasVariants && !generating && (
+            <button
+              onClick={handleGenerate}
+              className="w-full flex items-center justify-center gap-2 py-3 text-sm font-medium bg-foreground text-background hover:opacity-90 transition-opacity"
+            >
+              <Zap className="w-4 h-4" />
+              Generate reply variants
+            </button>
+          )}
 
-        {hasVariants && !generating && (
-          <button
-            onClick={handleGenerate}
-            className="w-full flex items-center justify-center gap-2 py-2 text-xs border border-border text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
-          >
-            Regenerate all variants
-          </button>
-        )}
+          {hasVariants && !generating && (
+            <button
+              onClick={handleGenerate}
+              className="w-full flex items-center justify-center gap-2 py-2 text-xs border border-border text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+            >
+              Regenerate all variants
+            </button>
+          )}
 
-        {/* Variants */}
-        <ResponseVariants
-          variants={variants}
-          activeVariant={activeVariant}
-          generating={generating}
-          regenLoading={regenLoading}
-          onVariantChange={(type, value) =>
-            setVariants((prev) => ({ ...prev, [type]: value }))
-          }
-          onActiveVariantChange={setActiveVariant}
-          onRegen={handleRegen}
-          insertRef={insertRef}
-        />
-
-        {/* Smart inserts */}
-        {(hasVariants || generating) && (
-          <SmartInsertsSidebar
-            inserts={smartInserts}
+          {/* Variants */}
+          <ResponseVariants
+            variants={variants}
+            activeVariant={activeVariant}
             generating={generating}
-            onInsert={(text) => insertRef.current?.(text)}
+            regenLoading={regenLoading}
+            onVariantChange={(type, value) =>
+              setVariants((prev) => ({ ...prev, [type]: value }))
+            }
+            onActiveVariantChange={setActiveVariant}
+            onRegen={handleRegen}
+            insertRef={insertRef}
           />
-        )}
-      </div>
+
+          {/* Smart inserts */}
+          {(hasVariants || generating) && (
+            <SmartInsertsSidebar
+              inserts={smartInserts}
+              generating={generating}
+              onInsert={(text) => insertRef.current?.(text)}
+            />
+          )}
+        </div>
+      )}
+
+      {/* ── MANUAL MODE ── */}
+      {composeMode === "manual" && (
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Formatting toolbar */}
+          <div className="flex items-center gap-0.5 px-3 py-2 border-b border-border bg-sidebar-accent/20 shrink-0">
+            <button
+              onMouseDown={(e) => { e.preventDefault(); execFormat("bold"); }}
+              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-colors"
+              title="Bold (Ctrl+B)"
+            >
+              <Bold className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onMouseDown={(e) => { e.preventDefault(); execFormat("italic"); }}
+              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-colors"
+              title="Italic (Ctrl+I)"
+            >
+              <Italic className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onMouseDown={(e) => { e.preventDefault(); execFormat("underline"); }}
+              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-colors"
+              title="Underline (Ctrl+U)"
+            >
+              <Underline className="w-3.5 h-3.5" />
+            </button>
+            <div className="w-px h-4 bg-border mx-1" />
+            <button
+              onMouseDown={(e) => { e.preventDefault(); handleLink(); }}
+              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-colors"
+              title="Insert link"
+            >
+              <Link className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onMouseDown={(e) => { e.preventDefault(); execFormat("insertUnorderedList"); }}
+              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-colors"
+              title="Bullet list"
+            >
+              <List className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* Contenteditable editor */}
+          <div
+            ref={editorRef}
+            contentEditable
+            suppressContentEditableWarning
+            data-placeholder="Write your reply..."
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                // Allow default — natural line breaks in contenteditable
+              }
+            }}
+            className={cn(
+              "flex-1 overflow-y-auto p-4 text-sm text-foreground leading-relaxed focus:outline-none",
+              "empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground/40"
+            )}
+          />
+        </div>
+      )}
 
       {/* Send footer */}
       <div className="px-4 py-3 border-t border-border shrink-0 flex items-center justify-between gap-3">
-        <span className="text-[11px] text-muted-foreground">
-          Sending{" "}
-          <span className="font-medium text-foreground capitalize">{activeVariant}</span>
-          {" variant"}
-        </span>
+        {composeMode === "ai" ? (
+          <span className="text-[11px] text-muted-foreground">
+            Sending{" "}
+            <span className="font-medium text-foreground capitalize">{activeVariant}</span>
+            {" variant"}
+          </span>
+        ) : (
+          <span className="text-[11px] text-muted-foreground">Manual reply</span>
+        )}
         <button
           onClick={handleSend}
-          disabled={isSending || !variants[activeVariant].trim()}
+          disabled={isSending}
           className="flex items-center gap-2 text-xs font-medium bg-foreground text-background px-4 py-2 hover:opacity-90 transition-opacity disabled:opacity-40"
         >
           {isSending ? (

@@ -120,6 +120,46 @@ function QuoteBlock({ lines }: { lines: string[] }) {
   );
 }
 
+// ── Iframe-based HTML email renderer ──────────────────────────────────────────
+function HtmlEmailFrame({ html }: { html: string }) {
+  const srcDoc = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;line-height:1.6;color:#111827;background:#fff;word-break:break-word;overflow-x:hidden}
+  img{max-width:100%;height:auto;display:block}
+  a{color:#3b82f6;text-decoration:underline}
+  pre,code{white-space:pre-wrap;word-break:break-word;font-size:12px}
+  blockquote{border-left:3px solid #e5e7eb;margin:8px 0;padding-left:12px;color:#6b7280}
+  table{border-collapse:collapse;max-width:100%;width:auto!important}
+  td,th{padding:4px 8px;vertical-align:top}
+  p{margin:0 0 8px}
+  h1,h2,h3,h4{margin:12px 0 6px;font-weight:600}
+  ul,ol{padding-left:20px;margin:6px 0}
+  .gmail_quote,.moz-cite-prefix{color:#6b7280;font-size:12px}
+  [style*="display:none"],[style*="display: none"]{display:none!important}
+</style>
+</head><body>${html}</body></html>`;
+
+  return (
+    <iframe
+      srcDoc={srcDoc}
+      sandbox="allow-popups allow-popups-to-escape-sandbox"
+      className="w-full border-0 block"
+      style={{ minHeight: 60 }}
+      title="Email content"
+      onLoad={(e) => {
+        const iframe = e.currentTarget;
+        const body = iframe.contentDocument?.body;
+        if (body) {
+          iframe.style.height = body.scrollHeight + 24 + "px";
+        }
+      }}
+    />
+  );
+}
+
 // ── Single email message card ──────────────────────────────────────────────────
 function EmailMessage({
   email,
@@ -188,25 +228,31 @@ function EmailMessage({
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <div className="px-5 pl-16 pb-6">
-              <p className="text-[10px] text-muted-foreground/40 mb-4">
+            <div className="pb-4">
+              <p className="text-[10px] text-muted-foreground/40 mb-3 px-5 pl-16">
                 To: {email.to_emails.join(", ")}
               </p>
-              <div className="space-y-3">
-                {segments.length === 0 ? (
-                  <p className="text-sm text-muted-foreground/40 italic">No content</p>
-                ) : (
-                  segments.map((seg, i) =>
-                    seg.type === "text" ? (
-                      <p key={i} className="text-[13px] text-foreground/90 leading-relaxed whitespace-pre-wrap">
-                        {seg.content}
-                      </p>
-                    ) : (
-                      <QuoteBlock key={i} lines={seg.lines} />
+              {email.body_html ? (
+                <div className="px-5 pl-16">
+                  <HtmlEmailFrame html={email.body_html} />
+                </div>
+              ) : (
+                <div className="px-5 pl-16 space-y-3">
+                  {segments.length === 0 ? (
+                    <p className="text-sm text-muted-foreground/40 italic">No content</p>
+                  ) : (
+                    segments.map((seg, i) =>
+                      seg.type === "text" ? (
+                        <p key={i} className="text-[13px] text-foreground/90 leading-relaxed whitespace-pre-wrap">
+                          {seg.content}
+                        </p>
+                      ) : (
+                        <QuoteBlock key={i} lines={seg.lines} />
+                      )
                     )
-                  )
-                )}
-              </div>
+                  )}
+                </div>
+              )}
             </div>
           </motion.div>
         )}

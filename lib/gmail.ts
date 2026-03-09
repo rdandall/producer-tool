@@ -269,17 +269,19 @@ export async function sendGmailReply(
     inReplyTo?: string;
     references?: string;
     fromEmail: string;
+    isHtml?: boolean;
   }
 ): Promise<void> {
-  const { to, subject, body, threadId, inReplyTo, references, fromEmail } = options;
+  const { to, subject, body, threadId, inReplyTo, references, fromEmail, isHtml } = options;
   const subjectLine = subject.startsWith("Re:") ? subject : `Re: ${subject}`;
+  const contentType = isHtml ? "text/html" : "text/plain";
 
   const emailLines = [
     `From: ${fromEmail}`,
     `To: ${to}`,
     `Subject: ${subjectLine}`,
     `MIME-Version: 1.0`,
-    `Content-Type: text/plain; charset=UTF-8`,
+    `Content-Type: ${contentType}; charset=UTF-8`,
   ];
   if (inReplyTo) emailLines.push(`In-Reply-To: ${inReplyTo}`);
   if (references) emailLines.push(`References: ${references}`);

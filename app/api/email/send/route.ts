@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const { to, subject, emailBody, threadId, inReplyTo, references } = body;
+  const { to, subject, emailBody, threadId, inReplyTo, references, isHtml } = body;
 
   if (!to || !emailBody || !threadId) {
     return NextResponse.json({ error: "Missing required fields: to, emailBody, threadId" }, { status: 400 });
@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
       inReplyTo,
       references,
       fromEmail: userEmail,
+      isHtml: !!isHtml,
     });
 
     return NextResponse.json({ success: true });
