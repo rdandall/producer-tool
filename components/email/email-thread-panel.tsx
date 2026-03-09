@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, ArrowRight, ChevronDown, ChevronUp, GitBranch, Paperclip, X } from "lucide-react";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import type { StoredEmail } from "@/lib/db/emails";
@@ -127,51 +127,63 @@ function QuoteBlock({ lines }: { lines: string[] }) {
 }
 
 // ── Iframe-based HTML email renderer ──────────────────────────────────────────
+// Uses postMessage from inside the iframe so height is always accurate —
+// even for complex marketing emails where images load asynchronously.
 function HtmlEmailFrame({ html }: { html: string }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(120);
+  // Unique ID so we ignore messages from other iframes on the page
+  const idRef = useRef(`hef-${Math.random().toString(36).slice(2)}`);
 
-  const recalcHeight = useCallback(() => {
-    const iframe = iframeRef.current;
-    if (!iframe) return;
-    try {
-      const doc = iframe.contentDocument;
-      if (!doc?.body) return;
-      // Use the larger of body vs documentElement scrollHeight
-      const h = Math.max(
-        doc.body.scrollHeight,
-        doc.documentElement?.scrollHeight ?? 0
-      );
-      if (h > 0) iframe.style.height = h + 16 + "px";
-    } catch {
-      // cross-origin guard — shouldn't happen with srcDoc
-    }
+  useEffect(() => {
+    const id = idRef.current;
+    const handler = (e: MessageEvent) => {
+      if (
+        e.data?.type === "prdcr-iframe-height" &&
+        e.data?.id === id &&
+        typeof e.data.height === "number" &&
+        e.data.height > 0
+      ) {
+        setHeight(e.data.height + 24);
+      }
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
   }, []);
 
-  const handleLoad = useCallback(() => {
-    // First pass — layout may not be complete yet
-    requestAnimationFrame(recalcHeight);
-    // Second pass after images have had time to load
-    setTimeout(recalcHeight, 150);
-    setTimeout(recalcHeight, 600);
+  const id = idRef.current;
 
-    // Also attach to every image so we recalc as each one finishes
-    try {
-      const doc = iframeRef.current?.contentDocument;
-      doc?.querySelectorAll("img").forEach((img) => {
-        if (!img.complete) img.addEventListener("load", recalcHeight);
-      });
-    } catch {
-      // ignore
-    }
-  }, [recalcHeight]);
+  // Injected script runs inside the sandboxed iframe and postMessages height
+  // back to the parent whenever content size changes (images, fonts, layout).
+  const heightScript = `<script>
+(function(){
+  var ID="${id}";
+  function send(){
+    var h=Math.max(document.body.scrollHeight,document.documentElement.scrollHeight);
+    parent.postMessage({type:"prdcr-iframe-height",id:ID,height:h},"*");
+  }
+  // Immediately after DOM ready
+  if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",send);}else{send();}
+  // After all resources (images, fonts)
+  window.addEventListener("load",send);
+  // Per-image: fire as each one loads
+  document.addEventListener("load",function(e){if(e.target&&e.target.nodeName==="IMG")send();},true);
+  // ResizeObserver catches layout shifts (web fonts, dynamic content)
+  if(window.ResizeObserver){new ResizeObserver(send).observe(document.body);}
+  // Belt-and-suspenders delayed retries
+  setTimeout(send,200);setTimeout(send,800);setTimeout(send,2000);
+})();
+</script>`;
 
   const srcDoc = `<!DOCTYPE html>
 <html><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+${heightScript}
 <style>
   *{box-sizing:border-box}
-  body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;line-height:1.6;color:#111827;background:#fff;word-break:break-word;overflow-x:hidden}
-  img{max-width:100%;height:auto;display:block}
+  html,body{margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;line-height:1.6;color:#111827;background:#fff;word-break:break-word;overflow-x:hidden}
+  img{max-width:100%;height:auto}
   a{color:#3b82f6;text-decoration:underline}
   pre,code{white-space:pre-wrap;word-break:break-word;font-size:12px}
   blockquote{border-left:3px solid #e5e7eb;margin:8px 0;padding-left:12px;color:#6b7280}
@@ -189,11 +201,13 @@ function HtmlEmailFrame({ html }: { html: string }) {
     <iframe
       ref={iframeRef}
       srcDoc={srcDoc}
-      sandbox="allow-popups allow-popups-to-escape-sandbox"
+      // allow-scripts is needed for the height-reporting script we inject.
+      // allow-same-origin is intentionally excluded so injected scripts
+      // cannot access the parent document — only postMessage is possible.
+      sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
       className="w-full border-0 block"
-      style={{ minHeight: 100 }}
+      style={{ height }}
       title="Email content"
-      onLoad={handleLoad}
     />
   );
 }

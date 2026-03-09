@@ -57,6 +57,7 @@ interface EmailClientProps {
   phases: Phase[];
   tasks: Task[];
   hasToneProfile: boolean;
+  initialFilterAddresses: string[];
 }
 
 /** Client-side date extraction (regex-based, instant) */
@@ -171,6 +172,7 @@ export function EmailClient({
   phases,
   tasks,
   hasToneProfile,
+  initialFilterAddresses,
 }: EmailClientProps) {
   const [emails, setEmails] = useState(initialEmails);
   const [taskSuggestions, setTaskSuggestions] = useState(initialTaskSuggestions);
@@ -182,6 +184,8 @@ export function EmailClient({
   const [phaseSignal, setPhaseSignal] = useState<PhaseSignal | null>(null);
   const [conflictsDismissed, setConflictsDismissed] = useState(false);
   const [phaseSignalDismissed, setPhaseSignalDismissed] = useState(false);
+  const [filterAddresses, setFilterAddresses] = useState<string[]>(initialFilterAddresses);
+  const [isFilterSaving, setIsFilterSaving] = useState(false);
 
   // Messages for the selected thread
   const threadMessages = useMemo(
@@ -243,6 +247,22 @@ export function EmailClient({
     return () => clearInterval(interval);
   }, [handleSync]);
 
+  const handleFilterChange = useCallback(async (addresses: string[]) => {
+    setFilterAddresses(addresses);
+    setIsFilterSaving(true);
+    try {
+      await fetch("/api/email/task-filter", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ addresses }),
+      });
+    } catch {
+      // non-critical — UI already updated optimistically
+    } finally {
+      setIsFilterSaving(false);
+    }
+  }, []);
+
   const handleSelectThread = useCallback(
     (threadId: string) => {
       setSelectedThreadId(threadId);
@@ -271,11 +291,18 @@ export function EmailClient({
         if (conflicts.length > 0) setDateConflicts(conflicts);
       }
 
-      // Trigger task extraction for the latest email in the thread (non-blocking)
+      // Trigger task extraction — only if sender is in the filter list
+      // (empty list = no auto-extraction; add addresses via the gear icon)
       const latestEmail = threadEmails[threadEmails.length - 1];
+      const senderAllowed =
+        filterAddresses.length > 0 &&
+        filterAddresses.some(
+          (addr) => addr.toLowerCase() === latestEmail?.from_email?.toLowerCase()
+        );
       if (
         latestEmail &&
         !latestEmail.is_sent &&
+        senderAllowed &&
         !taskSuggestions.some((s) => s.email_id === latestEmail.id)
       ) {
         fetch("/api/email/tasks", {
@@ -301,7 +328,7 @@ export function EmailClient({
           .catch(() => null);
       }
     },
-    [emails, phases, tasks, taskSuggestions, projects]
+    [emails, phases, tasks, taskSuggestions, projects, filterAddresses]
   );
 
   const handleApproveTask = useCallback(
@@ -369,6 +396,9 @@ export function EmailClient({
           onSync={handleSync}
           onApproveTask={handleApproveTask}
           onDismissTask={handleDismissTask}
+          filterAddresses={filterAddresses}
+          onFilterChange={handleFilterChange}
+          isFilterSaving={isFilterSaving}
         />
       </div>
 

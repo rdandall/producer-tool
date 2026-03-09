@@ -20,12 +20,15 @@ export default async function EmailPage({
 
   const supabase = await createClient();
 
-  const [emails, taskSuggestions, projects, hasToneProfile] = await Promise.all([
+  const [emails, taskSuggestions, projects, hasToneProfile, filterRaw] = await Promise.all([
     getAllEmails(),
     getPendingTaskSuggestions(),
     getProjects(),
     getSetting("gmail_tone_profile").then((v) => !!v),
+    getSetting("email_task_filter_addresses"),
   ]);
+
+  const initialFilterAddresses: string[] = filterRaw ? JSON.parse(filterRaw) : [];
 
   const { data: phases } = await supabase
     .from("phases")
@@ -61,6 +64,7 @@ export default async function EmailPage({
         project_id: t.project_id ?? null,
       }))}
       hasToneProfile={hasToneProfile}
+      initialFilterAddresses={initialFilterAddresses}
     />
   );
 }
