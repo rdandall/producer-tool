@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, ArrowRight, ChevronDown, ChevronUp, GitBranch, Paperclip, X } from "lucide-react";
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import type { StoredEmail } from "@/lib/db/emails";
@@ -128,6 +128,43 @@ function QuoteBlock({ lines }: { lines: string[] }) {
 
 // ── Iframe-based HTML email renderer ──────────────────────────────────────────
 function HtmlEmailFrame({ html }: { html: string }) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  const recalcHeight = useCallback(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    try {
+      const doc = iframe.contentDocument;
+      if (!doc?.body) return;
+      // Use the larger of body vs documentElement scrollHeight
+      const h = Math.max(
+        doc.body.scrollHeight,
+        doc.documentElement?.scrollHeight ?? 0
+      );
+      if (h > 0) iframe.style.height = h + 16 + "px";
+    } catch {
+      // cross-origin guard — shouldn't happen with srcDoc
+    }
+  }, []);
+
+  const handleLoad = useCallback(() => {
+    // First pass — layout may not be complete yet
+    requestAnimationFrame(recalcHeight);
+    // Second pass after images have had time to load
+    setTimeout(recalcHeight, 150);
+    setTimeout(recalcHeight, 600);
+
+    // Also attach to every image so we recalc as each one finishes
+    try {
+      const doc = iframeRef.current?.contentDocument;
+      doc?.querySelectorAll("img").forEach((img) => {
+        if (!img.complete) img.addEventListener("load", recalcHeight);
+      });
+    } catch {
+      // ignore
+    }
+  }, [recalcHeight]);
+
   const srcDoc = `<!DOCTYPE html>
 <html><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -138,7 +175,7 @@ function HtmlEmailFrame({ html }: { html: string }) {
   a{color:#3b82f6;text-decoration:underline}
   pre,code{white-space:pre-wrap;word-break:break-word;font-size:12px}
   blockquote{border-left:3px solid #e5e7eb;margin:8px 0;padding-left:12px;color:#6b7280}
-  table{border-collapse:collapse;max-width:100%;width:auto!important}
+  table{border-collapse:collapse;max-width:100%}
   td,th{padding:4px 8px;vertical-align:top}
   p{margin:0 0 8px}
   h1,h2,h3,h4{margin:12px 0 6px;font-weight:600}
@@ -150,18 +187,13 @@ function HtmlEmailFrame({ html }: { html: string }) {
 
   return (
     <iframe
+      ref={iframeRef}
       srcDoc={srcDoc}
       sandbox="allow-popups allow-popups-to-escape-sandbox"
       className="w-full border-0 block"
-      style={{ minHeight: 60 }}
+      style={{ minHeight: 100 }}
       title="Email content"
-      onLoad={(e) => {
-        const iframe = e.currentTarget;
-        const body = iframe.contentDocument?.body;
-        if (body) {
-          iframe.style.height = body.scrollHeight + 24 + "px";
-        }
-      }}
+      onLoad={handleLoad}
     />
   );
 }
@@ -234,16 +266,16 @@ function EmailMessage({
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <div className="pl-16 pb-4">
-              <p className="text-[10px] text-muted-foreground/40 mb-3 pr-5">
+            <div className="pb-4">
+              <p className="text-[10px] text-muted-foreground/40 mb-3 pl-16 pr-5">
                 To: {email.to_emails.join(", ")}
               </p>
               {/* Email body */}
-              <div className="bg-white mr-4 overflow-hidden">
+              <div className="bg-white overflow-hidden">
                 {email.body_html ? (
                   <HtmlEmailFrame html={email.body_html} />
                 ) : (
-                  <div className="p-4 space-y-3">
+                  <div className="pl-16 pr-5 py-3 space-y-3">
                     {segments.length === 0 ? (
                       <p className="text-sm text-muted-foreground/40 italic">No content</p>
                     ) : (
@@ -262,7 +294,7 @@ function EmailMessage({
               </div>
               {/* Attachments */}
               {email.attachments?.length > 0 && (
-                <div className="mt-3 mr-4 flex flex-wrap gap-2">
+                <div className="mt-3 pl-16 pr-5 flex flex-wrap gap-2">
                   {email.attachments.map((att, i) => (
                     <a
                       key={i}
