@@ -1,5 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
-import type { GmailMessage } from "@/lib/gmail";
+import type { GmailMessage, AttachmentMetadata } from "@/lib/gmail";
+
+export type { AttachmentMetadata };
 
 export interface StoredEmail {
   id: string;
@@ -16,6 +18,7 @@ export interface StoredEmail {
   is_read: boolean;
   is_sent: boolean;
   labels: string[];
+  attachments: AttachmentMetadata[];
   project_id: string | null;
   created_at: string;
 }
@@ -37,6 +40,7 @@ function normalizeEmail(raw: any): StoredEmail {
     ...raw,
     to_emails: Array.isArray(raw.to_emails) ? raw.to_emails : [],
     labels: Array.isArray(raw.labels) ? raw.labels : [],
+    attachments: Array.isArray(raw.attachments) ? raw.attachments : [],
   } as StoredEmail;
 }
 
@@ -72,6 +76,7 @@ export async function upsertEmails(messages: GmailMessage[]): Promise<void> {
     is_read: m.isRead,
     is_sent: m.isSent,
     labels: m.labels,
+    attachments: m.attachments,
   }));
 
   await supabase

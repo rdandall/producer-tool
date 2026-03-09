@@ -12,6 +12,13 @@ export const GMAIL_SCOPES = [
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+export interface AttachmentMetadata {
+  filename: string;
+  mimeType: string;
+  attachmentId: string;
+  size: number;
+}
+
 export interface GmailMessage {
   id: string;
   threadId: string;
@@ -25,6 +32,7 @@ export interface GmailMessage {
   isRead: boolean;
   isSent: boolean;
   labels: string[];
+  attachments: AttachmentMetadata[];
   messageId?: string; // RFC 2822 Message-ID header (for threading)
 }
 
@@ -132,29 +140,50 @@ function parseEmailAddress(raw: string): { email: string; name: string } {
   return { email: raw.trim(), name: "" };
 }
 
-function extractBody(payload: Record<string, unknown>): { text: string; html: string } {
-  if (!payload) return { text: "", html: "" };
+function extractBody(payload: Record<string, unknown>): { text: string; html: string; attachments: AttachmentMetadata[] } {
+  if (!payload) return { text: "", html: "", attachments: [] };
 
-  const body = payload.body as { data?: string } | undefined;
-  if (body?.data) {
-    const decoded = decodeBase64Url(body.data);
-    if (payload.mimeType === "text/plain") return { text: decoded, html: "" };
-    if (payload.mimeType === "text/html") return { text: "", html: decoded };
+  const mimeType = payload.mimeType as string | undefined;
+  const body = payload.body as { data?: string; attachmentId?: string; size?: number } | undefined;
+  const filename = payload.filename as string | undefined;
+  const parts = payload.parts as Array<Record<string, unknown>> | undefined;
+
+  // This part is an attachment (has a filename and an attachmentId, no inline data)
+  if (filename && filename.length > 0 && body?.attachmentId) {
+    return {
+      text: "",
+      html: "",
+      attachments: [{
+        filename,
+        mimeType: mimeType || "application/octet-stream",
+        attachmentId: body.attachmentId,
+        size: body.size ?? 0,
+      }],
+    };
   }
 
-  const parts = payload.parts as Array<Record<string, unknown>> | undefined;
+  // Inline content
+  if (body?.data) {
+    const decoded = decodeBase64Url(body.data);
+    if (mimeType === "text/plain") return { text: decoded, html: "", attachments: [] };
+    if (mimeType === "text/html") return { text: "", html: decoded, attachments: [] };
+  }
+
+  // Multipart — recurse into parts
   if (parts) {
     let text = "";
     let html = "";
+    const attachments: AttachmentMetadata[] = [];
     for (const part of parts) {
       const extracted = extractBody(part);
       if (extracted.text) text = extracted.text;
       if (extracted.html) html = extracted.html;
+      attachments.push(...extracted.attachments);
     }
-    return { text, html };
+    return { text, html, attachments };
   }
 
-  return { text: "", html: "" };
+  return { text: "", html: "", attachments: [] };
 }
 
 function parseMessage(raw: Record<string, unknown>): GmailMessage {
@@ -169,7 +198,7 @@ function parseMessage(raw: Record<string, unknown>): GmailMessage {
   const dateStr = getHeader(headers, "Date");
   const messageId = getHeader(headers, "Message-ID");
 
-  const { text: bodyText, html: bodyHtml } = extractBody(payload ?? {});
+  const { text: bodyText, html: bodyHtml, attachments } = extractBody(payload ?? {});
   const labels: string[] = (raw.labelIds as string[]) ?? [];
 
   return {
@@ -187,6 +216,7 @@ function parseMessage(raw: Record<string, unknown>): GmailMessage {
     isRead: !labels.includes("UNREAD"),
     isSent: labels.includes("SENT"),
     labels,
+    attachments,
     messageId: messageId || undefined,
   };
 }
@@ -270,24 +300,54 @@ export async function sendGmailReply(
     references?: string;
     fromEmail: string;
     isHtml?: boolean;
+    attachments?: Array<{ filename: string; mimeType: string; data: string }>; // base64
   }
 ): Promise<void> {
-  const { to, subject, body, threadId, inReplyTo, references, fromEmail, isHtml } = options;
+  const { to, subject, body, threadId, inReplyTo, references, fromEmail, isHtml, attachments } = options;
   const subjectLine = subject.startsWith("Re:") ? subject : `Re: ${subject}`;
   const contentType = isHtml ? "text/html" : "text/plain";
 
-  const emailLines = [
-    `From: ${fromEmail}`,
-    `To: ${to}`,
-    `Subject: ${subjectLine}`,
-    `MIME-Version: 1.0`,
-    `Content-Type: ${contentType}; charset=UTF-8`,
-  ];
-  if (inReplyTo) emailLines.push(`In-Reply-To: ${inReplyTo}`);
-  if (references) emailLines.push(`References: ${references}`);
-  emailLines.push("", body);
+  let rawEmail: string;
 
-  const rawEmail = emailLines.join("\r\n");
+  if (attachments && attachments.length > 0) {
+    const boundary = `boundary_${Date.now()}`;
+    const lines = [
+      `From: ${fromEmail}`,
+      `To: ${to}`,
+      `Subject: ${subjectLine}`,
+      `MIME-Version: 1.0`,
+      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    ];
+    if (inReplyTo) lines.push(`In-Reply-To: ${inReplyTo}`);
+    if (references) lines.push(`References: ${references}`);
+    lines.push("", `--${boundary}`);
+    lines.push(`Content-Type: ${contentType}; charset=UTF-8`, "", body);
+    for (const att of attachments) {
+      lines.push(
+        `--${boundary}`,
+        `Content-Type: ${att.mimeType}; name="${att.filename}"`,
+        `Content-Disposition: attachment; filename="${att.filename}"`,
+        `Content-Transfer-Encoding: base64`,
+        "",
+        att.data
+      );
+    }
+    lines.push(`--${boundary}--`);
+    rawEmail = lines.join("\r\n");
+  } else {
+    const emailLines = [
+      `From: ${fromEmail}`,
+      `To: ${to}`,
+      `Subject: ${subjectLine}`,
+      `MIME-Version: 1.0`,
+      `Content-Type: ${contentType}; charset=UTF-8`,
+    ];
+    if (inReplyTo) emailLines.push(`In-Reply-To: ${inReplyTo}`);
+    if (references) emailLines.push(`References: ${references}`);
+    emailLines.push("", body);
+    rawEmail = emailLines.join("\r\n");
+  }
+
   const encodedEmail = Buffer.from(rawEmail).toString("base64url");
 
   const res = await fetch(`${GMAIL_BASE}/messages/send`, {

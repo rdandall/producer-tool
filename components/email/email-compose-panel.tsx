@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useCallback } from "react";
-import { Send, Zap, X, Settings, Loader2, Bold, Italic, Underline, Link, List, Edit3 } from "lucide-react";
+import { Send, Zap, X, Settings, Loader2, Bold, Italic, Underline, Link, List, Edit3, Paperclip } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { StoredEmail } from "@/lib/db/emails";
@@ -80,6 +80,10 @@ export function EmailComposePanel({
 
   // Rich text editor ref (manual mode)
   const editorRef = useRef<HTMLDivElement>(null);
+  // File input ref for attachments
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Attachments state
+  const [attachments, setAttachments] = useState<File[]>([]);
 
   // insertRef is passed to ResponseVariants to expose the cursor-aware insert function
   const insertRef = useRef<((text: string) => void) | null>(null);
@@ -196,6 +200,14 @@ export function EmailComposePanel({
 
     setIsSending(true);
     try {
+      const attachmentData = await Promise.all(
+        attachments.map(async (file) => ({
+          filename: file.name,
+          mimeType: file.type || "application/octet-stream",
+          data: await fileToBase64(file),
+        }))
+      );
+
       const res = await fetch("/api/email/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -205,11 +217,13 @@ export function EmailComposePanel({
           emailBody,
           threadId: latestMsg.gmail_thread_id,
           isHtml: isManual,
+          attachments: attachmentData.length > 0 ? attachmentData : undefined,
         }),
       });
 
       if (!res.ok) throw new Error("Send failed");
       toast.success("Reply sent");
+      setAttachments([]);
       onClose();
     } catch {
       toast.error("Failed to send. Check your Gmail connection.");
@@ -226,6 +240,18 @@ export function EmailComposePanel({
     });
     toast.success("Style note saved");
     setShowStyleNote(false);
+  }
+
+  function fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        resolve(result.split(",")[1]);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
   }
 
   // Rich text formatting commands
@@ -442,7 +468,47 @@ export function EmailComposePanel({
             >
               <List className="w-3.5 h-3.5" />
             </button>
+            <div className="w-px h-4 bg-border mx-1" />
+            <button
+              onMouseDown={(e) => { e.preventDefault(); fileInputRef.current?.click(); }}
+              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-colors"
+              title="Attach file"
+            >
+              <Paperclip className="w-3.5 h-3.5" />
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? []);
+                setAttachments((prev) => [...prev, ...files]);
+                e.target.value = "";
+              }}
+            />
           </div>
+
+          {/* Attachment chips */}
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 px-3 py-2 border-b border-border/40 bg-sidebar-accent/10 shrink-0">
+              {attachments.map((file, i) => (
+                <div
+                  key={i}
+                  className="flex items-center gap-1.5 text-[11px] border border-border/50 px-2 py-1 text-foreground/70 bg-background"
+                >
+                  <Paperclip className="w-2.5 h-2.5 shrink-0" />
+                  <span className="truncate max-w-[120px]">{file.name}</span>
+                  <button
+                    onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                    className="ml-0.5 text-muted-foreground/40 hover:text-foreground transition-colors"
+                  >
+                    <X className="w-2.5 h-2.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Contenteditable editor */}
           <div
