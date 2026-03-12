@@ -14,11 +14,11 @@ export async function POST() {
     const limit = parseInt(limitStr ?? "50", 10) || 50;
 
     const messages = await listInboxMessages(token, limit);
-    await upsertEmails(messages);
+    const newCount = await upsertEmails(messages);
 
     // Return fresh email list so client can update state without a page reload
     const emails = await getAllEmails();
-    return NextResponse.json({ synced: messages.length, emails });
+    return NextResponse.json({ synced: newCount, total: messages.length, emails });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Sync failed";
     console.error("Email sync error:", err);

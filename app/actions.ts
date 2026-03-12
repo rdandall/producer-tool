@@ -64,6 +64,24 @@ export async function deleteTaskAction(taskId: string) {
   revalidatePath("/dashboard", "layout");
 }
 
+export async function createTaskDirectAction(params: {
+  title: string;
+  project_id?: string | null;
+  due_date?: string | null;
+  priority?: string | null;
+}) {
+  const supabase = await createClient();
+  const { error } = await supabase.from("tasks").insert({
+    title: params.title,
+    project_id: params.project_id ?? null,
+    due_date: params.due_date ?? null,
+    priority: params.priority ?? "medium",
+    completed: false,
+  });
+  if (error) throw new Error(error.message);
+  revalidatePath("/dashboard", "layout");
+}
+
 // ── Project actions ───────────────────────────────────────────────────────
 
 export async function createProjectAction(formData: FormData) {

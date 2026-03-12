@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import type { StoredEmail, EmailTaskSuggestion } from "@/lib/db/emails";
 import {
@@ -178,6 +178,7 @@ export function EmailClient({
   const [taskSuggestions, setTaskSuggestions] = useState(initialTaskSuggestions);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [composeOpen, setComposeOpen] = useState(false);
+  const assistantActionApplied = useRef(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [search, setSearch] = useState("");
   const [dateConflicts, setDateConflicts] = useState<DateConflict[]>([]);
@@ -206,7 +207,10 @@ export function EmailClient({
     setIsSyncing(true);
     try {
       const res = await fetch("/api/email/sync", { method: "POST" });
-      if (!res.ok) throw new Error("Sync failed");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? "Sync failed");
+      }
       const { synced, emails: freshEmails } = await res.json();
 
       // Update state in-place — no page reload needed
@@ -214,36 +218,39 @@ export function EmailClient({
 
       if (!silent) {
         if (synced > 0) {
-          toast.success(`Synced ${synced} new email${synced !== 1 ? "s" : ""}`);
+          toast.success(`${synced} new email${synced !== 1 ? "s" : ""}`);
         } else {
           toast.info("Inbox is up to date");
         }
       } else if (synced > 0) {
         toast.success(`${synced} new email${synced !== 1 ? "s" : ""}`, { id: "bg-sync" });
       }
-    } catch {
-      if (!silent) toast.error("Sync failed — check your Gmail connection");
+    } catch (err) {
+      if (!silent) {
+        const msg = err instanceof Error ? err.message : "Sync failed";
+        toast.error(msg.includes("Not connected") ? "Gmail not connected" : "Sync failed — try again");
+      }
     } finally {
       setIsSyncing(false);
     }
   }, []);
 
-  // Auto-sync on mount (rate-limited to once per 60s via sessionStorage)
+  // Auto-sync on mount (rate-limited to once per 30s via sessionStorage)
   useEffect(() => {
     const key = "prdcr-email-last-sync";
     const last = sessionStorage.getItem(key);
     const now = Date.now();
-    if (!last || now - parseInt(last) > 60_000) {
+    if (!last || now - parseInt(last) > 30_000) {
       sessionStorage.setItem(key, String(now));
       handleSync(true);
     }
   }, [handleSync]);
 
-  // Periodic background sync every 2 minutes (only when tab is visible)
+  // Background sync every 30 seconds when tab is visible
   useEffect(() => {
     const interval = setInterval(() => {
       if (!document.hidden) handleSync(true);
-    }, 120_000);
+    }, 30_000);
     return () => clearInterval(interval);
   }, [handleSync]);
 
@@ -330,6 +337,56 @@ export function EmailClient({
     },
     [emails, phases, tasks, taskSuggestions, projects, filterAddresses]
   );
+
+  // Handle assistant navigation — runs when emails are available
+  useEffect(() => {
+    if (assistantActionApplied.current || emails.length === 0) return;
+
+    const stored = sessionStorage.getItem("prdcr_assistant_email");
+    if (!stored) return;
+
+    assistantActionApplied.current = true;
+    sessionStorage.removeItem("prdcr_assistant_email");
+
+    try {
+      const assistantAction = JSON.parse(stored);
+
+      if (assistantAction.type === "reply" && assistantAction.thread_id) {
+        const threadExists = emails.some(
+          (e) => e.gmail_thread_id === assistantAction.thread_id
+        );
+        if (threadExists) {
+          handleSelectThread(assistantAction.thread_id);
+          setComposeOpen(true);
+        } else {
+          toast.info("Thread not found — it may need to sync first");
+        }
+      } else if (assistantAction.type === "reply" && assistantAction.sender_name) {
+        // Fuzzy match by sender name when no thread_id
+        const match = emails.find(
+          (e) =>
+            !e.is_sent &&
+            e.from_name?.toLowerCase().includes(assistantAction.sender_name.toLowerCase())
+        );
+        if (match?.gmail_thread_id) {
+          handleSelectThread(match.gmail_thread_id);
+          setComposeOpen(true);
+        } else {
+          toast.info(
+            `Find the email from ${assistantAction.sender_name} in your inbox to reply`
+          );
+        }
+      } else if (assistantAction.type === "compose") {
+        toast.info(
+          assistantAction.to
+            ? `Compose a new email to ${assistantAction.to}`
+            : "Assistant ready — select a thread to reply to"
+        );
+      }
+    } catch {
+      // malformed storage — ignore
+    }
+  }, [emails, handleSelectThread]);
 
   const handleApproveTask = useCallback(
     async (suggestion: EmailTaskSuggestion) => {

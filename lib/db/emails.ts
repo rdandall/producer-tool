@@ -49,7 +49,8 @@ export async function getAllEmails(): Promise<StoredEmail[]> {
   const { data, error } = await supabase
     .from("emails")
     .select("*")
-    .order("received_at", { ascending: false });
+    .order("received_at", { ascending: false })
+    .limit(300);
 
   if (error) {
     console.error("getAllEmails:", error.message);
@@ -58,9 +59,19 @@ export async function getAllEmails(): Promise<StoredEmail[]> {
   return (data ?? []).map((e) => normalizeEmail(e as Record<string, unknown>));
 }
 
-export async function upsertEmails(messages: GmailMessage[]): Promise<void> {
-  if (!messages.length) return;
+/** Upsert messages and return the number that are genuinely new (not previously synced). */
+export async function upsertEmails(messages: GmailMessage[]): Promise<number> {
+  if (!messages.length) return 0;
   const supabase = await createClient();
+
+  // Determine which IDs are already in the DB so we can return an accurate new-count
+  const incomingIds = messages.map((m) => m.id);
+  const { data: existing } = await supabase
+    .from("emails")
+    .select("gmail_message_id")
+    .in("gmail_message_id", incomingIds);
+  const existingSet = new Set((existing ?? []).map((r) => r.gmail_message_id as string));
+  const newCount = messages.filter((m) => !existingSet.has(m.id)).length;
 
   const rows = messages.map((m) => ({
     gmail_message_id: m.id,
@@ -79,9 +90,13 @@ export async function upsertEmails(messages: GmailMessage[]): Promise<void> {
     attachments: m.attachments,
   }));
 
-  await supabase
+  const { error } = await supabase
     .from("emails")
     .upsert(rows, { onConflict: "gmail_message_id", ignoreDuplicates: false });
+
+  if (error) throw new Error(`Email upsert failed: ${error.message}`);
+
+  return newCount;
 }
 
 export async function getPendingTaskSuggestions(): Promise<EmailTaskSuggestion[]> {

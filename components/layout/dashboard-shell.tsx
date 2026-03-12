@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Menu } from "lucide-react";
 import { Sidebar } from "@/components/layout/sidebar";
 import { CommandPalette } from "@/components/command-palette";
+import { GlobalAssistant } from "@/components/assistant/global-assistant";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Toaster } from "sonner";
 
@@ -70,6 +71,7 @@ export function DashboardShell({ children, projects, tasks }: DashboardShellProp
       </div>
 
       <CommandPalette projects={projects} tasks={tasks} />
+      <GlobalAssistant projects={projects} />
       <Toaster
         position="bottom-right"
         toastOptions={{
