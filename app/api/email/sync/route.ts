@@ -11,7 +11,7 @@ export async function POST() {
 
   try {
     const limitStr = await getSetting("email_sync_limit");
-    const limit = parseInt(limitStr ?? "50", 10) || 50;
+    const limit = parseInt(limitStr ?? "100", 10) || 100;
 
     const messages = await listInboxMessages(token, limit);
     const newCount = await upsertEmails(messages);

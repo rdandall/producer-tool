@@ -195,11 +195,23 @@ function parseMessage(raw: Record<string, unknown>): GmailMessage {
   const toRaw = getHeader(headers, "To");
   const to = toRaw ? toRaw.split(",").map((s) => s.trim()) : [];
   const subject = getHeader(headers, "Subject");
-  const dateStr = getHeader(headers, "Date");
   const messageId = getHeader(headers, "Message-ID");
 
   const { text: bodyText, html: bodyHtml, attachments } = extractBody(payload ?? {});
   const labels: string[] = (raw.labelIds as string[]) ?? [];
+
+  // Prefer internalDate (when Gmail actually received the message, in ms since epoch)
+  // over the Date header (when the sender claims to have sent it — often wrong for newsletters)
+  const internalDateMs = raw.internalDate as string | undefined;
+  const dateHeader = getHeader(headers, "Date");
+  let receivedAt: string;
+  if (internalDateMs) {
+    receivedAt = new Date(parseInt(internalDateMs, 10)).toISOString();
+  } else if (dateHeader) {
+    receivedAt = new Date(dateHeader).toISOString();
+  } else {
+    receivedAt = new Date().toISOString();
+  }
 
   return {
     id: raw.id as string,
@@ -210,9 +222,7 @@ function parseMessage(raw: Record<string, unknown>): GmailMessage {
     snippet: (raw.snippet as string) ?? "",
     bodyText,
     bodyHtml,
-    receivedAt: dateStr
-      ? new Date(dateStr).toISOString()
-      : new Date().toISOString(),
+    receivedAt,
     isRead: !labels.includes("UNREAD"),
     isSent: labels.includes("SENT"),
     labels,
@@ -225,26 +235,38 @@ function parseMessage(raw: Record<string, unknown>): GmailMessage {
 
 export async function listInboxMessages(
   accessToken: string,
-  maxResults = 50
+  maxResults = 100
 ): Promise<GmailMessage[]> {
+  // Use labelIds=INBOX (direct label filter) rather than q="in:inbox" (search query)
+  // — more reliable and faster; results come back sorted by internalDate descending
   const listRes = await fetch(
     `${GMAIL_BASE}/messages?` +
-      new URLSearchParams({ q: "in:inbox", maxResults: String(maxResults) }),
+      new URLSearchParams({ labelIds: "INBOX", maxResults: String(maxResults) }),
     { headers: { Authorization: `Bearer ${accessToken}` } }
   );
-  if (!listRes.ok) throw new Error("Failed to list Gmail messages");
+  if (!listRes.ok) {
+    const errBody = await listRes.json().catch(() => ({}));
+    throw new Error(`Failed to list Gmail messages: ${errBody?.error?.message ?? listRes.status}`);
+  }
   const listData = await listRes.json();
   const ids: string[] = (listData.messages ?? []).map((m: { id: string }) => m.id);
   if (!ids.length) return [];
 
-  const messages = await Promise.all(
+  // Fetch full message details in parallel; skip any that fail individually
+  const results = await Promise.allSettled(
     ids.map((id) =>
       fetch(`${GMAIL_BASE}/messages/${id}?format=full`, {
         headers: { Authorization: `Bearer ${accessToken}` },
-      }).then((r) => r.json())
+      }).then((r) => {
+        if (!r.ok) throw new Error(`Message ${id} fetch failed: ${r.status}`);
+        return r.json();
+      })
     )
   );
-  return messages.map((m) => parseMessage(m as Record<string, unknown>));
+
+  return results
+    .filter((r): r is PromiseFulfilledResult<Record<string, unknown>> => r.status === "fulfilled")
+    .map((r) => parseMessage(r.value));
 }
 
 export async function getGmailThread(
