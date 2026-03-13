@@ -43,7 +43,7 @@ function ProjectPill({
 }: {
   project: { id: string; title: string; status: string; color: string };
 }) {
-  const statusCfg = STATUS_CONFIG[project.status];
+  const statusCfg = STATUS_CONFIG[project.status as keyof typeof STATUS_CONFIG];
   return (
     <Link
       href={`/dashboard/projects/${project.id}`}
