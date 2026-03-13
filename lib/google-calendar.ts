@@ -31,7 +31,10 @@ export function getGoogleAuthUrl(redirectUri: string): string {
     client_id: process.env.GOOGLE_CLIENT_ID!,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: "https://www.googleapis.com/auth/calendar.readonly",
+    scope: [
+      "https://www.googleapis.com/auth/calendar.readonly",
+      "https://www.googleapis.com/auth/calendar.events",
+    ].join(" "),
     access_type: "offline",
     prompt: "consent", // force refresh_token to always be returned
   });
@@ -144,4 +147,51 @@ export async function fetchGoogleCalendarEvents(
   }));
 
   return { events: eventArrays.flat(), calendars };
+}
+
+/** Create a new event in the user's primary Google Calendar. */
+export async function createGoogleCalendarEvent(
+  accessToken: string,
+  event: {
+    summary: string;
+    description?: string;
+    startDateTime: string; // ISO 8601, e.g. "2026-03-13T18:30:00"
+    endDateTime: string;
+    timeZone?: string;
+    allDay?: boolean;
+    startDate?: string; // "YYYY-MM-DD" for all-day
+    endDate?: string;
+  }
+): Promise<{ id: string; htmlLink: string }> {
+  const body = event.allDay
+    ? {
+        summary: event.summary,
+        description: event.description,
+        start: { date: event.startDate },
+        end: { date: event.endDate ?? event.startDate },
+      }
+    : {
+        summary: event.summary,
+        description: event.description,
+        start: { dateTime: event.startDateTime, timeZone: event.timeZone ?? "UTC" },
+        end: { dateTime: event.endDateTime, timeZone: event.timeZone ?? "UTC" },
+      };
+
+  const res = await fetch(
+    `${GOOGLE_CALENDAR_BASE}/calendars/primary/events`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error?.message ?? "Failed to create calendar event");
+  }
+  const data = await res.json();
+  return { id: data.id, htmlLink: data.htmlLink };
 }

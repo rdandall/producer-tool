@@ -250,7 +250,12 @@ function EmailMessage({
             {displayName.charAt(0).toUpperCase()}
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-semibold text-foreground">{displayName}</p>
+            <div className="flex items-baseline gap-1.5 flex-wrap">
+              <p className="text-xs font-semibold text-foreground">{email.from_name || email.from_email}</p>
+              {email.from_name && email.from_name !== email.from_email && (
+                <p className="text-[11px] text-muted-foreground/50 truncate">&lt;{email.from_email}&gt;</p>
+              )}
+            </div>
             {!expanded && (
               <p className="text-[11px] text-muted-foreground/60 truncate max-w-[260px] mt-0.5">
                 {email.snippet}
@@ -281,9 +286,11 @@ function EmailMessage({
             className="overflow-hidden"
           >
             <div className="pb-4">
-              <p className="text-[10px] text-muted-foreground/40 mb-3 pl-16 pr-5">
-                To: {email.to_emails.join(", ")}
-              </p>
+              <div className="mb-3 pl-16 pr-5 space-y-0.5">
+                <p className="text-[10px] text-muted-foreground/40">
+                  To: {email.to_emails.join(", ")}
+                </p>
+              </div>
               {/* Email body */}
               <div className="bg-white overflow-hidden">
                 {email.body_html ? (

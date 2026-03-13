@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useTransition, type FormEvent } from "react";
+import { useState, useEffect, useCallback, useMemo, useTransition, useRef, type FormEvent } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -115,6 +115,18 @@ export function CalendarClient() {
   const [taskFormError, setTaskFormError] = useState("");
   const [isCreatingTask, startTaskTransition] = useTransition();
 
+  // ── Add-event dialog state ───────────────────────────────────────
+  const [eventDialogOpen, setEventDialogOpen] = useState(false);
+  const [eventDialogDate, setEventDialogDate] = useState("");
+  const [eventTitle, setEventTitle] = useState("");
+  const [eventDate, setEventDate] = useState("");
+  const [eventTime, setEventTime] = useState("");
+  const [eventEndTime, setEventEndTime] = useState("");
+  const [eventNotes, setEventNotes] = useState("");
+  const [eventAllDay, setEventAllDay] = useState(false);
+  const [isCreatingEvent, setIsCreatingEvent] = useState(false);
+  const eventTitleRef = useRef<HTMLInputElement>(null);
+
   // ── Conflict detection state ─────────────────────────────────────
   const [dismissedConflicts, setDismissedConflicts] = useState<Set<string>>(new Set());
 
@@ -125,18 +137,48 @@ export function CalendarClient() {
   const [showFeatures, setShowFeatures] = useState(false);
 
   // Strip ?connected=true from URL after OAuth redirect
+  // Also read assistant-provided event params (title, date, time, notes)
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
     if (p.get("connected") === "true") {
       window.history.replaceState({}, "", "/dashboard/calendar");
     }
-  }, []);
+    const assistantTitle = p.get("title");
+    const assistantDate  = p.get("date");
+    const assistantTime  = p.get("time");
+    const assistantNotes = p.get("notes");
+    const assistantDuration = p.get("duration");
+    if (assistantTitle || assistantDate) {
+      setEventTitle(assistantTitle ?? "");
+      setEventDate(assistantDate ?? todayStr);
+      setEventTime(assistantTime ?? "");
+      setEventNotes(assistantNotes ?? "");
+      // Auto-calculate end time from duration (e.g. "1 hour", "30 minutes")
+      if (assistantTime && assistantDuration) {
+        const match = assistantDuration.match(/(\d+(?:\.\d+)?)\s*(hour|minute|min|hr)/i);
+        if (match) {
+          const amount = parseFloat(match[1]);
+          const unit = match[2].toLowerCase();
+          const mins = unit.startsWith("h") ? amount * 60 : amount;
+          const [h, m] = assistantTime.split(":").map(Number);
+          const totalMins = h * 60 + (m || 0) + mins;
+          const endH = Math.floor(totalMins / 60) % 24;
+          const endM = Math.round(totalMins % 60);
+          setEventEndTime(`${String(endH).padStart(2, "0")}:${String(endM).padStart(2, "0")}`);
+        }
+      }
+      setEventDialogOpen(true);
+      // Clean URL params
+      window.history.replaceState({}, "", "/dashboard/calendar");
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Escape key closes features panel or task dialog
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         if (showFeatures) { setShowFeatures(false); return; }
+        if (eventDialogOpen) { setEventDialogOpen(false); return; }
         if (quickAddDate || convertEvent) { setQuickAddDate(null); setConvertEvent(null); setTaskFormError(""); }
       }
     }
@@ -225,6 +267,46 @@ export function CalendarClient() {
         setTaskFormError(err instanceof Error ? err.message : "Failed to create task");
       }
     });
+  }
+
+  // ── Open event dialog ────────────────────────────────────────────
+  function openEventDialog(dateStr: string) {
+    setEventTitle("");
+    setEventDate(dateStr);
+    setEventTime("09:00");
+    setEventEndTime("10:00");
+    setEventNotes("");
+    setEventAllDay(false);
+    setEventDialogOpen(true);
+    setTimeout(() => eventTitleRef.current?.focus(), 50);
+  }
+
+  // ── Create Google Calendar event ─────────────────────────────────
+  async function handleCreateEvent(e: FormEvent) {
+    e.preventDefault();
+    if (!eventTitle.trim()) return;
+    setIsCreatingEvent(true);
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      let body: Record<string, unknown>;
+      if (eventAllDay) {
+        body = { summary: eventTitle.trim(), description: eventNotes || undefined, allDay: true, startDate: eventDate, endDate: eventDate };
+      } else {
+        const startDT = `${eventDate}T${eventTime || "09:00"}:00`;
+        const endDT   = `${eventDate}T${eventEndTime || eventTime || "10:00"}:00`;
+        body = { summary: eventTitle.trim(), description: eventNotes || undefined, startDateTime: startDT, endDateTime: endDT, timeZone: tz };
+      }
+      const res = await fetch("/api/calendar/create-event", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed");
+      toast.success("Event added to Google Calendar");
+      setEventDialogOpen(false);
+      await fetchEvents(year, month);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to create event");
+    } finally {
+      setIsCreatingEvent(false);
+    }
   }
 
   // ── Build event map ──────────────────────────────────────────────
@@ -439,6 +521,16 @@ export function CalendarClient() {
             </div>
 
             <div className="flex items-center gap-3">
+              {/* New Event button (only when Google Calendar connected) */}
+              {data?.connected && (
+                <button
+                  onClick={() => openEventDialog(selected)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-foreground text-background hover:bg-foreground/85 transition-colors"
+                >
+                  <Plus className="w-3 h-3" /> New Event
+                </button>
+              )}
+
               {/* Print button */}
               <button
                 onClick={() => window.print()}
@@ -768,12 +860,22 @@ export function CalendarClient() {
                       <div className="flex flex-col items-center justify-center py-12 gap-2">
                         <CalendarDays className="w-6 h-6 text-muted-foreground/15" />
                         <p className="text-[11px] text-muted-foreground/30 text-center">All clear</p>
-                        <button
-                          onClick={() => setQuickAddDate(selected)}
-                          className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground/40 hover:text-foreground border border-border/40 px-2 py-1 transition-colors"
-                        >
-                          <Plus className="w-3 h-3" /> Add task
-                        </button>
+                        <div className="flex gap-2 mt-1">
+                          {data?.connected && (
+                            <button
+                              onClick={() => openEventDialog(selected)}
+                              className="flex items-center gap-1 text-[10px] text-muted-foreground/40 hover:text-foreground border border-border/40 px-2 py-1 transition-colors"
+                            >
+                              <Plus className="w-3 h-3" /> Add event
+                            </button>
+                          )}
+                          <button
+                            onClick={() => setQuickAddDate(selected)}
+                            className="flex items-center gap-1 text-[10px] text-muted-foreground/40 hover:text-foreground border border-border/40 px-2 py-1 transition-colors"
+                          >
+                            <Plus className="w-3 h-3" /> Add task
+                          </button>
+                        </div>
                       </div>
                     ) : (
                       selectedEvents.map((ev) => <EventCard key={ev.id} ev={ev} />)
@@ -960,10 +1062,16 @@ export function CalendarClient() {
             <div className="p-4 space-y-0.5">
               {[
                 {
-                  icon: <Plus className="w-4 h-4" />,
+                  icon: <CalendarDays className="w-4 h-4" />,
                   color: "#6366f1",
+                  title: "Add calendar event",
+                  desc: "Click 'New Event' in the header or 'Add event' on any day to create a Google Calendar event",
+                },
+                {
+                  icon: <Plus className="w-4 h-4" />,
+                  color: "#8b5cf6",
                   title: "Quick-add task",
-                  desc: "Hover any day → click + to create a task with the date pre-filled",
+                  desc: "Hover any day → click + or 'Add task' to create a PRDCR task with the date pre-filled",
                 },
                 {
                   icon: <ArrowRight className="w-4 h-4" />,
@@ -1029,6 +1137,81 @@ export function CalendarClient() {
             <div className="px-6 py-3 border-t border-border/50">
               <p className="text-[10px] text-muted-foreground/30 text-center">Press Esc or click outside to close</p>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Add Google Calendar Event Dialog ─────────────────── */}
+      {eventDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={() => setEventDialogOpen(false)} />
+          <div className="relative bg-background border border-border shadow-xl w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <div>
+                <p className="text-sm font-bold text-foreground">New Calendar Event</p>
+                <p className="text-[11px] text-muted-foreground/50 mt-0.5">Adds to your primary Google Calendar</p>
+              </div>
+              <button onClick={() => setEventDialogOpen(false)} className="text-muted-foreground/40 hover:text-foreground transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <form onSubmit={handleCreateEvent} className="p-5 space-y-3">
+              <input
+                ref={eventTitleRef}
+                value={eventTitle}
+                onChange={(e) => setEventTitle(e.target.value)}
+                required
+                placeholder="Event title…"
+                className={fieldClass}
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] uppercase tracking-wide text-muted-foreground/50 font-semibold block mb-1">Date</label>
+                  <input type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} required className={fieldClass} />
+                </div>
+                <div className="flex items-end">
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+                    <input type="checkbox" checked={eventAllDay} onChange={(e) => setEventAllDay(e.target.checked)} className="rounded" />
+                    All-day event
+                  </label>
+                </div>
+              </div>
+              {!eventAllDay && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] uppercase tracking-wide text-muted-foreground/50 font-semibold block mb-1">Start Time</label>
+                    <input type="time" value={eventTime} onChange={(e) => setEventTime(e.target.value)} required className={fieldClass} />
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase tracking-wide text-muted-foreground/50 font-semibold block mb-1">End Time</label>
+                    <input type="time" value={eventEndTime} onChange={(e) => setEventEndTime(e.target.value)} required className={fieldClass} />
+                  </div>
+                </div>
+              )}
+              <div>
+                <label className="text-[10px] uppercase tracking-wide text-muted-foreground/50 font-semibold block mb-1">Notes (optional)</label>
+                <textarea
+                  value={eventNotes}
+                  onChange={(e) => setEventNotes(e.target.value)}
+                  placeholder="Description or notes…"
+                  rows={2}
+                  className={fieldClass + " resize-none"}
+                />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button type="button" onClick={() => setEventDialogOpen(false)} className="px-3 py-2 text-xs border border-border/50 text-muted-foreground hover:text-foreground transition-colors">
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCreatingEvent || !eventTitle.trim()}
+                  className="flex-1 flex items-center justify-center gap-1.5 text-xs py-2 bg-foreground text-background font-semibold hover:bg-foreground/85 disabled:opacity-40 transition-colors"
+                >
+                  {isCreatingEvent ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                  {isCreatingEvent ? "Adding…" : "Add to Calendar"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

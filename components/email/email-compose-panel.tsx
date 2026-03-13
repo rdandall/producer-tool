@@ -1,12 +1,13 @@
 "use client";
 
 import { useRef, useState, useCallback } from "react";
-import { Send, Zap, X, Settings, Loader2, Bold, Italic, Underline, Link, List, Edit3, Paperclip } from "lucide-react";
+import { Send, Zap, X, Settings, Loader2, Bold, Italic, Underline, Link, List, Edit3, Paperclip, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { StoredEmail } from "@/lib/db/emails";
 import { ResponseVariants, type VariantType, type Variants } from "./response-variants";
 import { SmartInsertsSidebar } from "./smart-inserts-sidebar";
+import { ContactAutocomplete, type Contact } from "@/components/notes/contact-autocomplete";
 
 interface SmartInsert {
   label: string;
@@ -77,6 +78,8 @@ export function EmailComposePanel({
   const [isSending, setIsSending] = useState(false);
   const [showStyleNote, setShowStyleNote] = useState(false);
   const [styleNote, setStyleNote] = useState("");
+  const [ccRecipients, setCcRecipients] = useState<Contact[]>([]);
+  const [showCc, setShowCc] = useState(false);
 
   // Rich text editor ref (manual mode)
   const editorRef = useRef<HTMLDivElement>(null);
@@ -213,6 +216,7 @@ export function EmailComposePanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to: latestMsg.from_email,
+          cc: ccRecipients.length > 0 ? ccRecipients.map((c) => c.email) : undefined,
           subject: latestMsg.subject,
           emailBody,
           threadId: latestMsg.gmail_thread_id,
@@ -271,30 +275,49 @@ export function EmailComposePanel({
   return (
     <div className="flex flex-col h-full border-l border-border">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
-        <div className="min-w-0">
-          <p className="text-xs font-medium text-foreground">
-            Re: {latestMsg?.subject ?? "(No subject)"}
-          </p>
-          <p className="text-[11px] text-muted-foreground">
-            → {latestMsg?.from_email}
-          </p>
+      <div className="border-b border-border shrink-0">
+        <div className="flex items-center justify-between px-4 py-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium text-foreground truncate">
+              Re: {latestMsg?.subject ?? "(No subject)"}
+            </p>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <p className="text-[11px] text-muted-foreground">
+                → {latestMsg?.from_email}
+              </p>
+              <button
+                onClick={() => setShowCc((v) => !v)}
+                className="text-[10px] text-muted-foreground/50 hover:text-foreground transition-colors flex items-center gap-0.5 border border-border/40 px-1.5 py-0.5"
+              >
+                CC <ChevronDown className={cn("w-2.5 h-2.5 transition-transform", showCc && "rotate-180")} />
+              </button>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => setShowStyleNote((v) => !v)}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Edit style note"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+            <button
+              onClick={onClose}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowStyleNote((v) => !v)}
-            className="text-muted-foreground hover:text-foreground transition-colors"
-            title="Edit style note"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
-          <button
-            onClick={onClose}
-            className="text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+        {/* CC field */}
+        {showCc && (
+          <div className="px-4 pb-3">
+            <div className="flex items-start gap-2">
+              <span className="text-[10px] text-muted-foreground/50 uppercase tracking-wide font-semibold pt-2 shrink-0">CC</span>
+              <ContactAutocomplete value={ccRecipients} onChange={setCcRecipients} />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Mode toggle */}

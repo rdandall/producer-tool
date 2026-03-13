@@ -315,6 +315,7 @@ export async function sendGmailReply(
   accessToken: string,
   options: {
     to: string;
+    cc?: string[];
     subject: string;
     body: string;
     threadId: string;
@@ -325,7 +326,7 @@ export async function sendGmailReply(
     attachments?: Array<{ filename: string; mimeType: string; data: string }>; // base64
   }
 ): Promise<void> {
-  const { to, subject, body, threadId, inReplyTo, references, fromEmail, isHtml, attachments } = options;
+  const { to, cc, subject, body, threadId, inReplyTo, references, fromEmail, isHtml, attachments } = options;
   const subjectLine = subject.startsWith("Re:") ? subject : `Re: ${subject}`;
   const contentType = isHtml ? "text/html" : "text/plain";
 
@@ -336,6 +337,7 @@ export async function sendGmailReply(
     const lines = [
       `From: ${fromEmail}`,
       `To: ${to}`,
+      ...(cc && cc.length > 0 ? [`Cc: ${cc.join(", ")}`] : []),
       `Subject: ${subjectLine}`,
       `MIME-Version: 1.0`,
       `Content-Type: multipart/mixed; boundary="${boundary}"`,
@@ -360,6 +362,7 @@ export async function sendGmailReply(
     const emailLines = [
       `From: ${fromEmail}`,
       `To: ${to}`,
+      ...(cc && cc.length > 0 ? [`Cc: ${cc.join(", ")}`] : []),
       `Subject: ${subjectLine}`,
       `MIME-Version: 1.0`,
       `Content-Type: ${contentType}; charset=UTF-8`,

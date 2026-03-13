@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const { to, subject, emailBody, threadId, inReplyTo, references, isHtml, attachments } = body;
+  const { to, cc, subject, emailBody, threadId, inReplyTo, references, isHtml, attachments } = body;
 
   if (!to || !emailBody || !threadId) {
     return NextResponse.json({ error: "Missing required fields: to, emailBody, threadId" }, { status: 400 });
@@ -20,6 +20,7 @@ export async function POST(req: NextRequest) {
 
     await sendGmailReply(token, {
       to,
+      cc: Array.isArray(cc) ? cc : undefined,
       subject: subject ?? "",
       body: emailBody,
       threadId,
