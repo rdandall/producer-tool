@@ -54,7 +54,10 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
 
   const recognitionRef = useRef<AnySpeechRecognition>(null);
   const finalTranscriptRef = useRef("");
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const SILENCE_TIMEOUT_MS = 3000;
 
   useEffect(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -105,31 +108,55 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
     [getPageName]
   );
 
+  const clearSilenceTimer = useCallback(() => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+  }, []);
+
   const startListening = useCallback(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
     if (!SR) return;
 
     finalTranscriptRef.current = "";
+    clearSilenceTimer();
+
     const recognition = new SR() as AnySpeechRecognition;
-    recognition.continuous = false;
+    // continuous = true: browser won't auto-stop after a short pause —
+    // the user can take as long as they need between sentences.
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = "en-US";
 
+    const resetSilenceTimer = () => {
+      clearSilenceTimer();
+      // Auto-submit after 3 s of silence so hands-free still works
+      silenceTimerRef.current = setTimeout(() => {
+        recognition.stop();
+      }, SILENCE_TIMEOUT_MS);
+    };
+
     recognition.onresult = (event: AnySpeechRecognition) => {
       let interim = "";
-      for (const result of event.results) {
+      // Only process newly-arrived results (event.resultIndex onward) to
+      // avoid double-counting previous finals with continuous mode.
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
         if (result.isFinal) {
-          finalTranscriptRef.current += result[0].transcript;
-          setTranscript(finalTranscriptRef.current.trim());
+          finalTranscriptRef.current += result[0].transcript + " ";
         } else {
           interim += result[0].transcript;
         }
       }
+      setTranscript(finalTranscriptRef.current.trim());
       setInterimText(interim);
+      resetSilenceTimer();
     };
 
     recognition.onend = () => {
+      clearSilenceTimer();
       setInterimText("");
       const final = finalTranscriptRef.current.trim();
       if (final) {
@@ -140,23 +167,35 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
     };
 
     recognition.onerror = (e: AnySpeechRecognition) => {
-      if (e.error !== "aborted") {
+      clearSilenceTimer();
+      // "aborted" fires when we call .abort() ourselves; "no-speech" just
+      // means silence — if we already have transcript, process it normally.
+      if (e.error === "no-speech") {
+        const final = finalTranscriptRef.current.trim();
+        if (final) {
+          processTranscript(final);
+        } else {
+          setState("idle");
+        }
+      } else if (e.error !== "aborted") {
         toast.error("Microphone error — check browser permissions");
+        setState("idle");
       }
-      setState("idle");
       setInterimText("");
     };
 
     recognitionRef.current = recognition;
     recognition.start();
     setState("listening");
-  }, [processTranscript]);
+  }, [processTranscript, clearSilenceTimer, SILENCE_TIMEOUT_MS]);
 
   const stopListening = useCallback(() => {
+    clearSilenceTimer();
     recognitionRef.current?.stop();
-  }, []);
+  }, [clearSilenceTimer]);
 
   const dismiss = useCallback(() => {
+    clearSilenceTimer();
     recognitionRef.current?.abort();
     setState("idle");
     setAction(null);
@@ -165,7 +204,7 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
     setTextInput("");
     setShowTextFallback(false);
     finalTranscriptRef.current = "";
-  }, []);
+  }, [clearSilenceTimer]);
 
   const executeAction = useCallback(async () => {
     if (!action) return;
@@ -434,17 +473,26 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
 
       {/* Interim transcript bubble (listening state) */}
       <AnimatePresence>
-        {state === "listening" && (interimText || true) && (
+        {state === "listening" && (
           <motion.div
             initial={{ opacity: 0, x: 6 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 6 }}
-            className="flex items-center gap-2 bg-background/90 backdrop-blur-xl border border-border/50 px-3 py-2 shadow-lg max-w-[260px] mr-1"
+            className="flex items-center gap-2 bg-background/90 backdrop-blur-xl border border-border/50 px-3 py-2 shadow-lg max-w-[300px] mr-1"
           >
             <span className="w-1.5 h-1.5 rounded-full bg-foreground animate-pulse shrink-0" />
-            <span className="text-xs text-muted-foreground truncate">
-              {interimText || "Listening..."}
+            <span className="text-xs text-muted-foreground flex-1 min-w-0 line-clamp-2 leading-relaxed">
+              {transcript
+                ? `${transcript}${interimText ? ` ${interimText}` : ""}`
+                : interimText || "Listening…"}
             </span>
+            {/* Tap Done to submit immediately, skipping the silence timer */}
+            <button
+              onClick={stopListening}
+              className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-foreground bg-foreground/10 hover:bg-foreground/20 px-2 py-0.5 transition-colors ml-1"
+            >
+              Done
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
