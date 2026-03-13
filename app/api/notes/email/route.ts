@@ -121,7 +121,7 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         from: await getSetting("email_from_address") ?? process.env.RESEND_FROM_EMAIL ?? "PRDCR <noreply@prdcr.co>",
-        to: [to],
+        to: Array.isArray(to) ? to : [to],
         subject: emailSubject,
         html: emailHtml,
       }),

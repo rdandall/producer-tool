@@ -3,13 +3,14 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Download, Mail, Link2, Plus, Trash2, CheckSquare,
+  Link2, Plus, Trash2, CheckSquare,
   ChevronDown, ChevronUp, ExternalLink, Send, FileText, FileType,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createTaskAction } from "@/app/actions";
 import { toast } from "sonner";
 import type { NoteLink, ExtractedTask } from "@/lib/db/notes";
+import { ContactAutocomplete, type Contact } from "./contact-autocomplete";
 
 interface Props {
   noteId: string;
@@ -40,7 +41,7 @@ export function SendPanel({
   const [isExporting, setIsExporting] = useState<"pdf" | "docx" | null>(null);
 
   // Email state
-  const [emailTo, setEmailTo] = useState("");
+  const [emailRecipients, setEmailRecipients] = useState<Contact[]>([]);
   const [emailSubject, setEmailSubject] = useState("");
   const [emailNote, setEmailNote] = useState("");
   const [isSendingEmail, setIsSendingEmail] = useState(false);
@@ -113,14 +114,15 @@ export function SendPanel({
 
   // ── Email ───────────────────────────────────────────────────────────────
   async function sendEmail() {
-    if (!emailTo.trim() || !content || isSendingEmail) return;
+    if (emailRecipients.length === 0 || !content || isSendingEmail) return;
     setIsSendingEmail(true);
     try {
+      const toAddresses = emailRecipients.map((c) => c.email);
       const res = await fetch("/api/notes/email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to: emailTo.trim(),
+          to: toAddresses,
           subject: emailSubject.trim() || `PRDCR: ${title}`,
           content,
           title,
@@ -133,7 +135,8 @@ export function SendPanel({
         throw new Error(err.error ?? "Send failed");
       }
       setEmailSent(true);
-      toast.success(`Sent to ${emailTo}`);
+      const label = toAddresses.length === 1 ? toAddresses[0] : `${toAddresses.length} recipients`;
+      toast.success(`Sent to ${label}`);
       setTimeout(() => setEmailSent(false), 4000);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Email failed");
@@ -187,7 +190,7 @@ export function SendPanel({
   const hasContent = !!content;
 
   return (
-    <div className="w-72 shrink-0 border-l border-border overflow-auto">
+    <div className="w-full md:w-72 shrink-0 border-l border-border overflow-auto">
       {/* Export Section */}
       <SectionHeader
         title="Export"
@@ -354,12 +357,9 @@ export function SendPanel({
             <div className="flex flex-col gap-2">
               <div>
                 <label className="label-xs">To</label>
-                <input
-                  value={emailTo}
-                  onChange={(e) => setEmailTo(e.target.value)}
-                  placeholder="editor@example.com"
-                  type="email"
-                  className="w-full text-[12px] bg-transparent border border-border px-2.5 py-1.5 focus:outline-none focus:border-primary text-foreground placeholder:text-muted-foreground/30 transition-colors"
+                <ContactAutocomplete
+                  value={emailRecipients}
+                  onChange={setEmailRecipients}
                 />
               </div>
 
@@ -386,10 +386,10 @@ export function SendPanel({
 
               <button
                 onClick={sendEmail}
-                disabled={!emailTo.trim() || !hasContent || isSendingEmail || emailSent}
+                disabled={emailRecipients.length === 0 || !hasContent || isSendingEmail || emailSent}
                 className={cn(
                   "flex items-center justify-center gap-2 py-2 text-[12px] font-semibold transition-all",
-                  emailTo.trim() && hasContent && !isSendingEmail
+                  emailRecipients.length > 0 && hasContent && !isSendingEmail
                     ? emailSent
                       ? "bg-green-500/20 text-green-600 border border-green-500/30"
                       : "bg-primary text-primary-foreground hover:-translate-y-px shadow-sm"

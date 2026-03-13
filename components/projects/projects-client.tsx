@@ -57,7 +57,7 @@ export function ProjectsClient({ projects }: Props) {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Page header */}
-      <div className="flex items-center justify-between px-8 h-14 border-b border-border shrink-0">
+      <div className="flex items-center justify-between px-4 sm:px-8 h-14 border-b border-border shrink-0">
         <div className="flex items-center gap-4">
           <h1 className="text-sm font-semibold tracking-wide uppercase text-muted-foreground">
             Projects
@@ -99,7 +99,7 @@ export function ProjectsClient({ projects }: Props) {
       </div>
 
       {/* Filter chips */}
-      <div className="flex items-center gap-1.5 px-8 py-2.5 border-b border-border/50 shrink-0">
+      <div className="flex items-center gap-1.5 px-4 sm:px-8 py-2.5 border-b border-border/50 shrink-0 overflow-x-auto scrollbar-none">
         {STATUS_FILTERS.map((s) => {
           const label = s === "all" ? "All" : (STATUS_CONFIG[s]?.label ?? s);
           const active = statusFilter === s;
@@ -134,7 +134,7 @@ export function ProjectsClient({ projects }: Props) {
 function TableView({ projects }: { projects: Project[] }) {
   return (
     <div className="flex-1 overflow-auto">
-      <table className="w-full">
+      <table className="w-full min-w-[640px]">
         <thead>
           <tr className="border-b border-border">
             <th className="text-left px-8 py-3 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/60 w-[220px]">
@@ -242,7 +242,7 @@ function TableView({ projects }: { projects: Project[] }) {
 /* ── Grid View ───────────────────────────────────────────── */
 function GridView({ projects }: { projects: Project[] }) {
   return (
-    <div className="flex-1 overflow-auto px-8 py-6">
+    <div className="flex-1 overflow-auto px-4 py-4 sm:px-8 sm:py-6">
       {projects.length === 0 ? (
         <div className="text-center py-16">
           <p className="text-sm text-muted-foreground">No projects yet. Create your first one.</p>

@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { ChevronLeft } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { StoredEmail, EmailTaskSuggestion } from "@/lib/db/emails";
 import {
@@ -178,6 +180,8 @@ export function EmailClient({
   const [taskSuggestions, setTaskSuggestions] = useState(initialTaskSuggestions);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
   const [composeOpen, setComposeOpen] = useState(false);
+  // Mobile: "list" | "thread" | "compose" — controls which panel is visible on small screens
+  const [mobileView, setMobileView] = useState<"list" | "thread" | "compose">("list");
   const assistantActionApplied = useRef(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [search, setSearch] = useState("");
@@ -274,6 +278,7 @@ export function EmailClient({
     (threadId: string) => {
       setSelectedThreadId(threadId);
       setComposeOpen(false);
+      setMobileView("thread");
       setConflictsDismissed(false);
       setPhaseSignalDismissed(false);
       setPhaseSignal(null);
@@ -358,6 +363,7 @@ export function EmailClient({
         if (threadExists) {
           handleSelectThread(assistantAction.thread_id);
           setComposeOpen(true);
+          setMobileView("compose");
         } else {
           toast.info("Thread not found — it may need to sync first");
         }
@@ -371,6 +377,7 @@ export function EmailClient({
         if (match?.gmail_thread_id) {
           handleSelectThread(match.gmail_thread_id);
           setComposeOpen(true);
+          setMobileView("compose");
         } else {
           toast.info(
             `Find the email from ${assistantAction.sender_name} in your inbox to reply`
@@ -439,8 +446,12 @@ export function EmailClient({
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* Left: Email list */}
-      <div className="w-72 shrink-0 overflow-hidden flex flex-col">
+      {/* Left: Email list — full-width on mobile, fixed width on desktop */}
+      <div className={cn(
+        "shrink-0 overflow-hidden flex flex-col",
+        "w-full md:w-72",
+        mobileView !== "list" ? "hidden md:flex" : "flex"
+      )}>
         <EmailListPanel
           emails={emails}
           selectedThreadId={selectedThreadId}
@@ -460,7 +471,20 @@ export function EmailClient({
       </div>
 
       {/* Center: Thread view */}
-      <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
+      <div className={cn(
+        "flex-1 min-w-0 overflow-hidden flex-col",
+        mobileView === "thread" ? "flex" : "hidden md:flex"
+      )}>
+        {/* Mobile back to inbox */}
+        <div className="md:hidden flex items-center gap-2 px-4 h-11 border-b border-border shrink-0 bg-background/80 backdrop-blur-sm">
+          <button
+            onClick={() => { setSelectedThreadId(null); setMobileView("list"); }}
+            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            Inbox
+          </button>
+        </div>
         <EmailThreadPanel
           messages={threadMessages}
           dateConflicts={visibleConflicts}
@@ -468,20 +492,34 @@ export function EmailClient({
           onDismissConflicts={() => setConflictsDismissed(true)}
           onDismissPhaseSignal={() => setPhaseSignalDismissed(true)}
           onPhaseAction={handlePhaseAction}
-          onReply={() => setComposeOpen(true)}
+          onReply={() => { setComposeOpen(true); setMobileView("compose"); }}
         />
       </div>
 
-      {/* Right: AI Compose (conditionally rendered) */}
+      {/* Right: AI Compose — full-width on mobile, fixed width on desktop */}
       {composeOpen && threadMessages.length > 0 && (
-        <div className="w-[460px] shrink-0 overflow-hidden flex flex-col">
+        <div className={cn(
+          "shrink-0 overflow-hidden flex-col",
+          "w-full md:w-[460px]",
+          mobileView === "compose" ? "flex" : "hidden md:flex"
+        )}>
+          {/* Mobile back to thread */}
+          <div className="md:hidden flex items-center gap-2 px-4 h-11 border-b border-border shrink-0 bg-background/80 backdrop-blur-sm">
+            <button
+              onClick={() => setMobileView("thread")}
+              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              Thread
+            </button>
+          </div>
           <EmailComposePanel
             threadMessages={threadMessages}
             projects={projects}
             phases={phases}
             tasks={tasks}
             hasToneProfile={hasToneProfile}
-            onClose={() => setComposeOpen(false)}
+            onClose={() => { setComposeOpen(false); setMobileView("thread"); }}
             onPhaseSignal={(signal) => {
               setPhaseSignal(signal);
               setPhaseSignalDismissed(false);

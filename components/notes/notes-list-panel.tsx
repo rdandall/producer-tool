@@ -70,7 +70,7 @@ export function NotesListPanel({ notes, selectedId, onSelect, onNew }: Props) {
   }
 
   return (
-    <div className="w-64 shrink-0 flex flex-col border-r border-border overflow-hidden">
+    <div className="w-full md:w-64 shrink-0 flex flex-col border-r border-border overflow-hidden">
       {/* Panel header */}
       <div className="px-4 h-14 flex items-center justify-between border-b border-border shrink-0">
         <span className="text-[11px] uppercase tracking-[0.12em] font-semibold text-muted-foreground/60">

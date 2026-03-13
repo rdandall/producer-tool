@@ -2,7 +2,8 @@
 
 import { useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { FileText, Plus, Sparkles } from "lucide-react";
+import { FileText, Plus, Sparkles, ChevronLeft, Share2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { NotesListPanel } from "./notes-list-panel";
 import { DictationPanel } from "./dictation-panel";
@@ -41,6 +42,9 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
 
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Mobile panel navigation: "list" | "editor" | "send"
+  const [mobilePanelView, setMobilePanelView] = useState<"list" | "editor" | "send">("list");
+
   // ── New blank note ──────────────────────────────────────────────────────
   function handleNew() {
     setSelectedNote(null);
@@ -50,6 +54,7 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
     setCurrentLinks([]);
     setCurrentExtractedTasks([]);
     setEditorState("idle");
+    setMobilePanelView("editor");
   }
 
   // ── Select existing note ────────────────────────────────────────────────
@@ -62,6 +67,7 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
     setCurrentExtractedTasks(note.extracted_tasks ?? []);
     setSelectedProjectId(note.project_id);
     setEditorState(note.content ? "ready" : "idle");
+    setMobilePanelView("editor");
   }
 
   // ── AI Generate ─────────────────────────────────────────────────────────
@@ -184,31 +190,64 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
 
   return (
     <div className="flex-1 flex overflow-hidden">
-      {/* Left panel: notes list */}
-      <NotesListPanel
-        notes={notes}
-        selectedId={currentNoteId}
-        onSelect={handleSelectNote}
-        onNew={handleNew}
-      />
+      {/* Left panel: notes list — hidden on mobile when in editor/send view */}
+      <div className={cn(
+        "flex-1 md:flex-none overflow-hidden",
+        mobilePanelView !== "list" ? "hidden md:flex" : "flex"
+      )}>
+        <NotesListPanel
+          notes={notes}
+          selectedId={currentNoteId}
+          onSelect={handleSelectNote}
+          onNew={handleNew}
+        />
+      </div>
 
-      {/* Center: dictation + editor */}
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+      {/* Center: dictation + editor — hidden on mobile when showing list or send panel */}
+      <div className={cn(
+        "flex-1 flex flex-col overflow-hidden min-w-0",
+        mobilePanelView === "editor" ? "flex" : "hidden md:flex"
+      )}>
         {/* Header */}
-        <div className="flex items-center justify-between px-6 h-14 border-b border-border shrink-0">
-          <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between px-4 sm:px-6 h-14 border-b border-border shrink-0">
+          {/* Mobile: back to list */}
+          <button
+            onClick={() => setMobilePanelView("list")}
+            className="md:hidden flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors shrink-0"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            Notes
+          </button>
+          {/* Desktop: title */}
+          <div className="hidden md:flex items-center gap-3">
             <FileText className="w-4 h-4 text-primary" />
-            <h1 className="text-sm font-semibold text-foreground">
+            <h1 className="text-sm font-semibold text-foreground truncate">
               {currentTitle || "Notes & Briefs"}
             </h1>
           </div>
-          <button
-            onClick={handleNew}
-            className="flex items-center gap-1.5 text-[11px] text-muted-foreground/50 hover:text-foreground transition-colors border border-border/40 hover:border-border px-2.5 py-1.5"
-          >
-            <Plus className="w-3 h-3" />
-            New
-          </button>
+          {/* Mobile: title centered */}
+          <h1 className="md:hidden text-sm font-semibold text-foreground truncate flex-1 text-center px-2">
+            {currentTitle || "Notes & Briefs"}
+          </h1>
+          <div className="flex items-center gap-1.5">
+            {/* Mobile: Actions button when send panel is available */}
+            {showRightPanel && (
+              <button
+                onClick={() => setMobilePanelView("send")}
+                className="md:hidden flex items-center gap-1 text-[11px] text-muted-foreground/50 hover:text-foreground transition-colors border border-border/40 hover:border-border px-2 py-1.5"
+              >
+                <Share2 className="w-3 h-3" />
+                Actions
+              </button>
+            )}
+            <button
+              onClick={handleNew}
+              className="flex items-center gap-1.5 text-[11px] text-muted-foreground/50 hover:text-foreground transition-colors border border-border/40 hover:border-border px-2.5 py-1.5"
+            >
+              <Plus className="w-3 h-3" />
+              New
+            </button>
+          </div>
         </div>
 
         {/* Dictation panel — always visible */}
@@ -222,7 +261,7 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
         />
 
         {/* Document editor / states */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
           <AnimatePresence mode="wait">
             {editorState === "generating" ? (
               <motion.div
@@ -283,8 +322,11 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
                 exit={{ opacity: 0 }}
                 className="flex flex-col items-center justify-center h-full gap-3 px-8 text-center"
               >
-                <p className="text-xs text-muted-foreground/35">
+                <p className="text-xs text-muted-foreground/35 hidden md:block">
                   Select a note from the left, or dictate new notes above
+                </p>
+                <p className="text-xs text-muted-foreground/35 md:hidden">
+                  Tap Notes to browse, or dictate above
                 </p>
               </motion.div>
             )}
@@ -293,6 +335,7 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
       </div>
 
       {/* Right panel: export, links, email, tasks */}
+      {/* On mobile: shown as full-width when mobilePanelView === "send" */}
       <AnimatePresence>
         {(editorState === "ready" || showRightPanel) && (
           <motion.div
@@ -301,18 +344,33 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 20 }}
             transition={{ duration: 0.2 }}
-            className="flex overflow-hidden"
+            className={cn(
+              "flex flex-col overflow-hidden",
+              mobilePanelView === "send" ? "flex" : "hidden md:flex"
+            )}
           >
-            <SendPanel
-              noteId={currentNoteId ?? ""}
-              title={currentTitle}
-              content={currentContent}
-              links={currentLinks}
-              extractedTasks={currentExtractedTasks}
-              onLinksChange={handleLinksChange}
-              projects={projects}
-              selectedProjectId={selectedProjectId}
-            />
+            {/* Mobile back to editor */}
+            <div className="md:hidden flex items-center gap-2 px-4 h-11 border-b border-border shrink-0 bg-background/80 backdrop-blur-sm">
+              <button
+                onClick={() => setMobilePanelView("editor")}
+                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                Back to editor
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto">
+              <SendPanel
+                noteId={currentNoteId ?? ""}
+                title={currentTitle}
+                content={currentContent}
+                links={currentLinks}
+                extractedTasks={currentExtractedTasks}
+                onLinksChange={handleLinksChange}
+                projects={projects}
+                selectedProjectId={selectedProjectId}
+              />
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

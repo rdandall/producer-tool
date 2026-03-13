@@ -85,7 +85,7 @@ export function TasksClient({ tasks, projects }: Props) {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-8 h-14 border-b border-border shrink-0">
+      <div className="flex items-center justify-between px-4 sm:px-8 h-14 border-b border-border shrink-0">
         <div className="flex items-center gap-4">
           <h1 className="text-sm font-semibold tracking-wide uppercase text-muted-foreground">
             Tasks
@@ -126,7 +126,7 @@ export function TasksClient({ tasks, projects }: Props) {
       </div>
 
       {/* Filter bar */}
-      <div className="flex items-center gap-4 px-8 py-2.5 border-b border-border/50 shrink-0">
+      <div className="flex items-center gap-3 px-4 sm:px-8 py-2.5 border-b border-border/50 shrink-0 overflow-x-auto scrollbar-none">
         <div className="flex items-center gap-1.5">
           {PRIORITY_FILTERS.map((p) => {
             const label = p === "all" ? "All" : p.charAt(0).toUpperCase() + p.slice(1);
@@ -166,7 +166,11 @@ export function TasksClient({ tasks, projects }: Props) {
 
       {/* Content + Panel */}
       <div className="flex-1 flex overflow-hidden">
-        <div className="flex-1 overflow-hidden">
+        {/* Task list — hidden on mobile when a task is selected */}
+        <div className={cn(
+          "flex-1 overflow-hidden",
+          syncedSelected ? "hidden md:block" : "block"
+        )}>
           {view === "list" ? (
             <ListView
               open={open}
@@ -324,7 +328,7 @@ function ListView({
   const upcomingTasks = open.filter((t) => !t.due_date || formatDate(t.due_date) !== "Today");
 
   return (
-    <div className="flex-1 overflow-auto px-8 py-8 max-w-3xl">
+    <div className="flex-1 overflow-auto px-4 py-4 sm:px-8 sm:py-8 max-w-3xl w-full">
       {todayTasks.length > 0 && (
         <section className="mb-10">
           <p className="text-[10px] uppercase tracking-[0.14em] font-semibold text-muted-foreground/50 mb-4">

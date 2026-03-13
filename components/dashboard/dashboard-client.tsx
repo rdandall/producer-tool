@@ -68,7 +68,7 @@ export function DashboardClient({ projects, tasks }: Props) {
 
   return (
     <div className="flex-1 overflow-auto">
-      <div className="max-w-4xl mx-auto px-10 py-10">
+      <div className="max-w-4xl mx-auto px-4 py-6 sm:px-8 sm:py-8 lg:px-10 lg:py-10">
 
         {/* ── Greeting — compact ─────────────────────────── */}
         <motion.div
@@ -90,18 +90,21 @@ export function DashboardClient({ projects, tasks }: Props) {
 
         {/* ── Stat strip — horizontal, compact ───────────── */}
         <motion.div
-          className="flex items-center gap-0 mb-8 border border-border"
+          className="overflow-x-auto mb-8 scrollbar-none"
           initial="hidden"
           animate="visible"
           variants={stagger}
         >
+          <div className="grid grid-cols-2 sm:grid-cols-4 border border-border min-w-[300px]">
           {stats.map((stat, i) => (
-            <motion.div key={stat.label} variants={fadeUp} transition={spring} className="flex-1">
+            <motion.div key={stat.label} variants={fadeUp} transition={spring} className="">
               <Link
                 href={stat.href}
                 className={cn(
-                  "block px-5 py-3.5 hover:bg-accent/20 transition-colors",
-                  i !== 0 && "border-l border-border"
+                  "block px-4 py-3.5 hover:bg-accent/20 transition-colors",
+                  (i === 1 || i === 3) && "border-l border-border",
+                  i >= 2 && "border-t border-border sm:border-t-0",
+                  i !== 0 && "sm:border-l sm:border-border"
                 )}
               >
                 <p className="text-[10px] uppercase tracking-[0.12em] font-semibold text-muted-foreground/50 mb-1">
@@ -113,6 +116,7 @@ export function DashboardClient({ projects, tasks }: Props) {
               </Link>
             </motion.div>
           ))}
+          </div>
         </motion.div>
 
         {/* ── Today's Tasks — HERO section ────────────────── */}

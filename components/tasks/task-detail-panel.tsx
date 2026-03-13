@@ -114,7 +114,7 @@ export function TaskDetailPanel({ task, projects, onClose }: Props) {
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: "100%", opacity: 0 }}
       transition={{ type: "spring", stiffness: 400, damping: 35 }}
-      className="w-[360px] shrink-0 border-l border-border flex flex-col bg-background overflow-y-auto"
+      className="w-full md:w-[360px] shrink-0 border-l border-border flex flex-col bg-background overflow-y-auto"
     >
       {/* Header */}
       <div className="flex items-start gap-3 px-5 py-4 border-b border-border">
