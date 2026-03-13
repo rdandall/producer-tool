@@ -155,6 +155,7 @@ export async function createGoogleCalendarEvent(
   event: {
     summary: string;
     description?: string;
+    location?: string;
     startDateTime: string; // ISO 8601, e.g. "2026-03-13T18:30:00"
     endDateTime: string;
     timeZone?: string;
@@ -167,12 +168,14 @@ export async function createGoogleCalendarEvent(
     ? {
         summary: event.summary,
         description: event.description,
+        location: event.location,
         start: { date: event.startDate },
         end: { date: event.endDate ?? event.startDate },
       }
     : {
         summary: event.summary,
         description: event.description,
+        location: event.location,
         start: { dateTime: event.startDateTime, timeZone: event.timeZone ?? "UTC" },
         end: { dateTime: event.endDateTime, timeZone: event.timeZone ?? "UTC" },
       };

@@ -250,13 +250,10 @@ function EmailMessage({
             {displayName.charAt(0).toUpperCase()}
           </div>
           <div className="min-w-0">
-            <div className="flex items-baseline gap-1.5 flex-wrap">
-              <p className="text-xs font-semibold text-foreground">{email.from_name || email.from_email}</p>
-              {email.from_name && email.from_name !== email.from_email && (
-                <p className="text-[11px] text-muted-foreground/50 truncate">&lt;{email.from_email}&gt;</p>
-              )}
-            </div>
-            {!expanded && (
+            <p className="text-xs font-semibold text-foreground">{email.from_name || email.from_email}</p>
+            {expanded && email.from_email ? (
+              <p className="text-[11px] text-muted-foreground/70 mt-0.5 select-all">{email.from_email}</p>
+            ) : (
               <p className="text-[11px] text-muted-foreground/60 truncate max-w-[260px] mt-0.5">
                 {email.snippet}
               </p>

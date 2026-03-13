@@ -4,7 +4,7 @@ import { refreshGoogleToken, createGoogleCalendarEvent } from "@/lib/google-cale
 
 export async function POST(req: NextRequest) {
   try {
-    const { summary, description, startDateTime, endDateTime, timeZone, allDay, startDate, endDate } =
+    const { summary, description, location, startDateTime, endDateTime, timeZone, allDay, startDate, endDate } =
       await req.json();
 
     if (!summary) {
@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
     const result = await createGoogleCalendarEvent(accessToken, {
       summary,
       description,
+      location,
       startDateTime,
       endDateTime,
       timeZone,

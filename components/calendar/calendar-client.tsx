@@ -122,6 +122,7 @@ export function CalendarClient() {
   const [eventDate, setEventDate] = useState("");
   const [eventTime, setEventTime] = useState("");
   const [eventEndTime, setEventEndTime] = useState("");
+  const [eventLocation, setEventLocation] = useState("");
   const [eventNotes, setEventNotes] = useState("");
   const [eventAllDay, setEventAllDay] = useState(false);
   const [isCreatingEvent, setIsCreatingEvent] = useState(false);
@@ -146,12 +147,14 @@ export function CalendarClient() {
     const assistantTitle = p.get("title");
     const assistantDate  = p.get("date");
     const assistantTime  = p.get("time");
+    const assistantLocation = p.get("location");
     const assistantNotes = p.get("notes");
     const assistantDuration = p.get("duration");
     if (assistantTitle || assistantDate) {
       setEventTitle(assistantTitle ?? "");
       setEventDate(assistantDate ?? todayStr);
       setEventTime(assistantTime ?? "");
+      setEventLocation(assistantLocation ?? "");
       setEventNotes(assistantNotes ?? "");
       // Auto-calculate end time from duration (e.g. "1 hour", "30 minutes")
       if (assistantTime && assistantDuration) {
@@ -275,6 +278,7 @@ export function CalendarClient() {
     setEventDate(dateStr);
     setEventTime("09:00");
     setEventEndTime("10:00");
+    setEventLocation("");
     setEventNotes("");
     setEventAllDay(false);
     setEventDialogOpen(true);
@@ -290,15 +294,24 @@ export function CalendarClient() {
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
       let body: Record<string, unknown>;
       if (eventAllDay) {
-        body = { summary: eventTitle.trim(), description: eventNotes || undefined, allDay: true, startDate: eventDate, endDate: eventDate };
+        body = { summary: eventTitle.trim(), description: eventNotes || undefined, location: eventLocation || undefined, allDay: true, startDate: eventDate, endDate: eventDate };
       } else {
         const startDT = `${eventDate}T${eventTime || "09:00"}:00`;
         const endDT   = `${eventDate}T${eventEndTime || eventTime || "10:00"}:00`;
-        body = { summary: eventTitle.trim(), description: eventNotes || undefined, startDateTime: startDT, endDateTime: endDT, timeZone: tz };
+        body = { summary: eventTitle.trim(), description: eventNotes || undefined, location: eventLocation || undefined, startDateTime: startDT, endDateTime: endDT, timeZone: tz };
       }
       const res = await fetch("/api/calendar/create-event", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed");
+      if (!res.ok) {
+        // 401 most likely means the stored token lacks calendar write scope —
+        // the user connected before we added calendar.events permission.
+        if (res.status === 401 || (data.error ?? "").toLowerCase().includes("unauthorized") || (data.error ?? "").toLowerCase().includes("insufficient")) {
+          toast.error("Calendar write access required — disconnect and reconnect Google Calendar to grant permission.", { duration: 8000 });
+        } else {
+          throw new Error(data.error ?? "Failed to create event");
+        }
+        return;
+      }
       toast.success("Event added to Google Calendar");
       setEventDialogOpen(false);
       await fetchEvents(year, month);
@@ -1162,6 +1175,12 @@ export function CalendarClient() {
                 onChange={(e) => setEventTitle(e.target.value)}
                 required
                 placeholder="Event title…"
+                className={fieldClass}
+              />
+              <input
+                value={eventLocation}
+                onChange={(e) => setEventLocation(e.target.value)}
+                placeholder="Location or address (optional)…"
                 className={fieldClass}
               />
               <div className="grid grid-cols-2 gap-3">

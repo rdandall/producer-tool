@@ -252,12 +252,13 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
         }
 
         case "add_calendar_event": {
-          const { title, date, time, duration, notes } = action.action_params;
+          const { title, date, time, duration, location, notes } = action.action_params;
           const params = new URLSearchParams();
           if (title) params.set("title", title);
           if (date) params.set("date", date);
           if (time) params.set("time", time);
           if (duration) params.set("duration", duration);
+          if (location) params.set("location", location);
           if (notes) params.set("notes", notes);
           dismiss();
           router.push(`/dashboard/calendar?${params}`);

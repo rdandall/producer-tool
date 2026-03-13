@@ -60,7 +60,7 @@ action_params by intent:
 - create_task: { "title": string, "project_id"?: string, "project_name"?: string, "due_date"?: "YYYY-MM-DD", "priority"?: "low"|"medium"|"high" }
 - reply_email: { "thread_id"?: string, "sender_name"?: string, "subject_hint"?: string, "hint"?: string }
 - compose_email: { "to"?: string, "subject"?: string, "hint"?: string }
-- add_calendar_event: { "title": string, "date"?: "YYYY-MM-DD", "time"?: string, "duration"?: string, "notes"?: string }
+- add_calendar_event: { "title": string, "date"?: "YYYY-MM-DD", "time"?: string, "duration"?: string, "location"?: string, "notes"?: string }
 - create_note: { "type"?: "brief"|"meeting-notes"|"project-notes"|"client-brief", "title"?: string, "project_name"?: string }
 - navigate: { "page": string, "path": "/dashboard"|"/dashboard/email"|"/dashboard/tasks"|"/dashboard/calendar"|"/dashboard/notes"|"/dashboard/projects" }
 - unknown: { "message": string }
