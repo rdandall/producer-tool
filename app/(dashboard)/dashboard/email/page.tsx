@@ -20,15 +20,18 @@ export default async function EmailPage({
 
   const supabase = await createClient();
 
-  const [emails, taskSuggestions, projects, hasToneProfile, filterRaw] = await Promise.all([
-    getAllEmails(),
-    getPendingTaskSuggestions(),
-    getProjects(),
-    getSetting("gmail_tone_profile").then((v) => !!v),
-    getSetting("email_task_filter_addresses"),
-  ]);
+  const [emails, taskSuggestions, projects, hasToneProfile, filterRaw, calendarToken] =
+    await Promise.all([
+      getAllEmails(),
+      getPendingTaskSuggestions(),
+      getProjects(),
+      getSetting("gmail_tone_profile").then((v) => !!v),
+      getSetting("email_task_filter_addresses"),
+      getSetting("google_refresh_token"),
+    ]);
 
   const initialFilterAddresses: string[] = filterRaw ? JSON.parse(filterRaw) : [];
+  const calendarConnected = !!calendarToken;
 
   const { data: phases } = await supabase
     .from("phases")
@@ -65,6 +68,7 @@ export default async function EmailPage({
       }))}
       hasToneProfile={hasToneProfile}
       initialFilterAddresses={initialFilterAddresses}
+      calendarConnected={calendarConnected}
     />
   );
 }

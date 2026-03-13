@@ -1,11 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Search, RefreshCw, CheckCircle2, X, ListChecks, ChevronDown, Settings2 } from "lucide-react";
+import { Search, RefreshCw, CheckCircle2, X, ListChecks, ChevronDown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import type { StoredEmail, EmailTaskSuggestion } from "@/lib/db/emails";
-import { TaskFilterSettings, type KnownSender } from "./task-filter-settings";
 
 interface Project {
   id: string;
@@ -36,10 +35,6 @@ interface EmailListPanelProps {
   onSync: () => void;
   onApproveTask: (suggestion: EmailTaskSuggestion) => void;
   onDismissTask: (id: string) => void;
-  // Task extraction filter
-  filterAddresses: string[];
-  onFilterChange: (addresses: string[]) => void;
-  isFilterSaving?: boolean;
 }
 
 function buildThreads(emails: StoredEmail[]): EmailThread[] {
@@ -103,25 +98,8 @@ export function EmailListPanel({
   onSync,
   onApproveTask,
   onDismissTask,
-  filterAddresses,
-  onFilterChange,
-  isFilterSaving,
 }: EmailListPanelProps) {
   const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-
-  // Unique senders from synced emails (for autocomplete)
-  const knownSenders: KnownSender[] = Array.from(
-    emails
-      .filter((e) => !e.is_sent && e.from_email)
-      .reduce((map, e) => {
-        if (!map.has(e.from_email)) {
-          map.set(e.from_email, { email: e.from_email, name: e.from_name });
-        }
-        return map;
-      }, new Map<string, KnownSender>())
-      .values()
-  ).sort((a, b) => (a.name ?? a.email).localeCompare(b.name ?? b.email));
 
   const allThreads = buildThreads(emails.filter((e) => !e.is_sent));
   const filtered = search.trim()
@@ -148,7 +126,7 @@ export function EmailListPanel({
             {/* Task badge */}
             {pendingCount > 0 && (
               <button
-                onClick={() => { setTaskDrawerOpen((v) => !v); setSettingsOpen(false); }}
+                onClick={() => setTaskDrawerOpen((v) => !v)}
                 className={cn(
                   "flex items-center gap-1 text-[10px] font-medium px-2 py-1 border transition-colors",
                   taskDrawerOpen
@@ -161,19 +139,6 @@ export function EmailListPanel({
                 <ChevronDown className={cn("w-2.5 h-2.5 transition-transform", taskDrawerOpen && "rotate-180")} />
               </button>
             )}
-            {/* Settings gear */}
-            <button
-              onClick={() => { setSettingsOpen((v) => !v); setTaskDrawerOpen(false); }}
-              title="Task extraction settings"
-              className={cn(
-                "flex items-center justify-center w-6 h-6 transition-colors",
-                settingsOpen
-                  ? "text-primary"
-                  : "text-muted-foreground/50 hover:text-foreground"
-              )}
-            >
-              <Settings2 className="w-3.5 h-3.5" />
-            </button>
             {/* Sync button */}
             <button
               onClick={onSync}
@@ -265,27 +230,6 @@ export function EmailListPanel({
                 );
               })}
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ── Settings drawer ─────────────────────────────────────────────── */}
-      <AnimatePresence>
-        {settingsOpen && (
-          <motion.div
-            key="settings-drawer"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: "easeInOut" }}
-            className="overflow-hidden border-b border-border/60 bg-sidebar-accent/10 shrink-0"
-          >
-            <TaskFilterSettings
-              addresses={filterAddresses}
-              knownSenders={knownSenders}
-              onChange={onFilterChange}
-              isSaving={isFilterSaving}
-            />
           </motion.div>
         )}
       </AnimatePresence>

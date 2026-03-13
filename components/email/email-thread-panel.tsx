@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ArrowRight, ChevronDown, ChevronUp, GitBranch, Paperclip, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, CalendarPlus, ChevronDown, ChevronUp, GitBranch, Paperclip, X } from "lucide-react";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -20,6 +20,12 @@ interface DateConflict {
   conflictDetails: string;
 }
 
+interface MentionedDate {
+  raw: string;
+  iso: string | null;
+  context: string;
+}
+
 interface PhaseSignal {
   detected: boolean;
   description: string;
@@ -30,10 +36,14 @@ interface PhaseSignal {
 interface EmailThreadPanelProps {
   messages: StoredEmail[];
   dateConflicts: DateConflict[];
+  mentionedDates: MentionedDate[];
   phaseSignal: PhaseSignal | null;
+  calendarConnected: boolean;
+  currentSubject: string;
   onDismissConflicts: () => void;
   onDismissPhaseSignal: () => void;
   onPhaseAction: (phaseId: string | null, action: string) => void;
+  onCreateCalendarEvent: (params: { summary: string; date: string }) => void;
   onReply: () => void;
 }
 
@@ -44,8 +54,7 @@ function formatTime(dateStr: string | null): string {
   const isToday = date.toDateString() === now.toDateString();
   const isThisYear = date.getFullYear() === now.getFullYear();
   if (isToday) return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  if (isThisYear)
-    return date.toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  if (isThisYear) return date.toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   return date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
 }
 
@@ -56,7 +65,6 @@ function getAvatarColor(name: string): string {
   return palette[h % palette.length];
 }
 
-// ── Email body parser ──────────────────────────────────────────────────────────
 type Segment = { type: "text"; content: string } | { type: "quote"; lines: string[] };
 
 function parseEmailBody(raw: string): Segment[] {
@@ -87,7 +95,6 @@ function parseEmailBody(raw: string): Segment[] {
   return result;
 }
 
-// ── Collapsible quoted text block ──────────────────────────────────────────────
 function QuoteBlock({ lines }: { lines: string[] }) {
   const [open, setOpen] = useState(false);
   return (
@@ -126,13 +133,9 @@ function QuoteBlock({ lines }: { lines: string[] }) {
   );
 }
 
-// ── Iframe-based HTML email renderer ──────────────────────────────────────────
-// Uses postMessage from inside the iframe so height is always accurate —
-// even for complex marketing emails where images load asynchronously.
 function HtmlEmailFrame({ html }: { html: string }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(120);
-  // Unique ID so we ignore messages from other iframes on the page
   const idRef = useRef(`hef-${Math.random().toString(36).slice(2)}`);
 
   useEffect(() => {
@@ -152,9 +155,6 @@ function HtmlEmailFrame({ html }: { html: string }) {
   }, []);
 
   const id = idRef.current;
-
-  // Injected script runs inside the sandboxed iframe and postMessages height
-  // back to the parent whenever content size changes (images, fonts, layout).
   const heightScript = `<script>
 (function(){
   var ID="${id}";
@@ -162,15 +162,10 @@ function HtmlEmailFrame({ html }: { html: string }) {
     var h=Math.max(document.body.scrollHeight,document.documentElement.scrollHeight);
     parent.postMessage({type:"prdcr-iframe-height",id:ID,height:h},"*");
   }
-  // Immediately after DOM ready
   if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",send);}else{send();}
-  // After all resources (images, fonts)
   window.addEventListener("load",send);
-  // Per-image: fire as each one loads
   document.addEventListener("load",function(e){if(e.target&&e.target.nodeName==="IMG")send();},true);
-  // ResizeObserver catches layout shifts (web fonts, dynamic content)
   if(window.ResizeObserver){new ResizeObserver(send).observe(document.body);}
-  // Belt-and-suspenders delayed retries
   setTimeout(send,200);setTimeout(send,800);setTimeout(send,2000);
 })();
 </script>`;
@@ -201,9 +196,6 @@ ${heightScript}
     <iframe
       ref={iframeRef}
       srcDoc={srcDoc}
-      // allow-scripts is needed for the height-reporting script we inject.
-      // allow-same-origin is intentionally excluded so injected scripts
-      // cannot access the parent document — only postMessage is possible.
       sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
       className="w-full border-0 block"
       style={{ height }}
@@ -212,7 +204,6 @@ ${heightScript}
   );
 }
 
-// ── Single email message card ──────────────────────────────────────────────────
 function EmailMessage({
   email,
   isLatest,
@@ -234,7 +225,6 @@ function EmailMessage({
       transition={{ delay: index * 0.05, duration: 0.2, ease: "easeOut" }}
       className="border-b border-border/30 last:border-0"
     >
-      {/* Header row — always visible */}
       <button
         className={cn(
           "w-full flex items-center justify-between px-5 py-3.5 transition-colors text-left gap-3",
@@ -261,9 +251,7 @@ function EmailMessage({
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <span className="text-[10px] text-muted-foreground/50">
-            {formatTime(email.received_at)}
-          </span>
+          <span className="text-[10px] text-muted-foreground/50">{formatTime(email.received_at)}</span>
           {expanded ? (
             <ChevronUp className="w-3.5 h-3.5 text-muted-foreground/30" />
           ) : (
@@ -272,7 +260,6 @@ function EmailMessage({
         </div>
       </button>
 
-      {/* Body — animated */}
       <AnimatePresence>
         {expanded && (
           <motion.div
@@ -288,7 +275,6 @@ function EmailMessage({
                   To: {email.to_emails.join(", ")}
                 </p>
               </div>
-              {/* Email body */}
               <div className="bg-white overflow-hidden">
                 {email.body_html ? (
                   <HtmlEmailFrame html={email.body_html} />
@@ -310,7 +296,6 @@ function EmailMessage({
                   </div>
                 )}
               </div>
-              {/* Attachments */}
               {email.attachments?.length > 0 && (
                 <div className="mt-3 pl-16 pr-5 flex flex-wrap gap-2">
                   {email.attachments.map((att, i) => (
@@ -335,16 +320,83 @@ function EmailMessage({
   );
 }
 
+// ── Inline calendar event form ─────────────────────────────────────────────────
+function CalendarEventForm({
+  date,
+  defaultTitle,
+  onSubmit,
+  onClose,
+}: {
+  date: MentionedDate;
+  defaultTitle: string;
+  onSubmit: (summary: string, isoDate: string) => void;
+  onClose: () => void;
+}) {
+  const [title, setTitle] = useState(defaultTitle);
+
+  const handleSubmit = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!title.trim() || !date.iso) return;
+      onSubmit(title.trim(), date.iso);
+      onClose();
+    },
+    [title, date.iso, onSubmit, onClose]
+  );
+
+  return (
+    <motion.form
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: "auto" }}
+      exit={{ opacity: 0, height: 0 }}
+      transition={{ duration: 0.15 }}
+      onSubmit={handleSubmit}
+      className="overflow-hidden mt-1.5 border border-primary/20 bg-primary/5 p-2.5 space-y-2"
+    >
+      <input
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        placeholder="Event title"
+        className="w-full text-xs bg-background border border-border px-2 py-1.5 text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary transition-colors"
+        autoFocus
+      />
+      <p className="text-[10px] text-muted-foreground/50">{date.raw} · all day · {date.iso}</p>
+      <div className="flex gap-1.5">
+        <button
+          type="submit"
+          disabled={!title.trim()}
+          className="text-[10px] font-semibold px-2.5 py-1 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40"
+        >
+          Add to Calendar
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-[10px] px-2.5 py-1 text-muted-foreground hover:text-foreground border border-border transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
+    </motion.form>
+  );
+}
+
 // ── Main thread panel ──────────────────────────────────────────────────────────
 export function EmailThreadPanel({
   messages,
   dateConflicts,
+  mentionedDates,
   phaseSignal,
+  calendarConnected,
+  currentSubject,
   onDismissConflicts,
   onDismissPhaseSignal,
   onPhaseAction,
+  onCreateCalendarEvent,
   onReply,
 }: EmailThreadPanelProps) {
+  const [activeCalendarDate, setActiveCalendarDate] = useState<string | null>(null);
+
   if (!messages.length) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -361,6 +413,7 @@ export function EmailThreadPanel({
 
   const subject = messages[0]?.subject ?? "(No subject)";
   const latestIdx = messages.length - 1;
+  const calendarDates = mentionedDates.filter((d) => d.iso);
 
   return (
     <div className="flex flex-col h-full bg-white">
@@ -445,6 +498,69 @@ export function EmailThreadPanel({
                 <button onClick={onDismissPhaseSignal} className="text-muted-foreground/30 hover:text-foreground transition-colors mt-0.5 shrink-0">
                   <X className="w-3.5 h-3.5" />
                 </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Calendar dates — only when Google Calendar is connected */}
+        {calendarConnected && calendarDates.length > 0 && (
+          <motion.div
+            key="calendar-dates"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.15 }}
+            className="shrink-0 overflow-hidden"
+          >
+            <div className="mx-4 mt-3 border border-border/60 bg-sidebar-accent/30 p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <CalendarPlus className="w-3.5 h-3.5 text-muted-foreground/50" />
+                <p className="text-[11px] font-semibold text-muted-foreground/60 uppercase tracking-wider">
+                  Dates mentioned
+                </p>
+              </div>
+              <div className="space-y-2">
+                {calendarDates.map((d, i) => (
+                  <div key={i}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <span className="text-[11px] font-medium text-foreground/80">{d.raw}</span>
+                        {d.context && (
+                          <p className="text-[10px] text-muted-foreground/50 truncate max-w-[200px] mt-0.5">
+                            &ldquo;{d.context.trim()}&rdquo;
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        onClick={() =>
+                          setActiveCalendarDate(activeCalendarDate === d.iso ? null : (d.iso ?? null))
+                        }
+                        className={cn(
+                          "flex items-center gap-1 text-[10px] font-medium px-2 py-1 border shrink-0 transition-colors",
+                          activeCalendarDate === d.iso
+                            ? "bg-primary/10 border-primary/40 text-primary"
+                            : "border-border/50 text-muted-foreground/60 hover:border-primary/30 hover:text-primary"
+                        )}
+                      >
+                        <CalendarPlus className="w-3 h-3" />
+                        Add
+                      </button>
+                    </div>
+                    <AnimatePresence>
+                      {activeCalendarDate === d.iso && (
+                        <CalendarEventForm
+                          date={d}
+                          defaultTitle={currentSubject}
+                          onSubmit={(summary, isoDate) =>
+                            onCreateCalendarEvent({ summary, date: isoDate })
+                          }
+                          onClose={() => setActiveCalendarDate(null)}
+                        />
+                      )}
+                    </AnimatePresence>
+                  </div>
+                ))}
               </div>
             </div>
           </motion.div>

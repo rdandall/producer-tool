@@ -84,11 +84,11 @@ ${JSON.stringify(projectContext, null, 2)}`
 
 ${
   phases?.length
-    ? `PROJECT PHASES:
+    ? `PROJECT PHASES (IDs are the real database UUIDs — use them exactly):
 ${phases
   .map(
-    (p: { name: string; status: string; start_date?: string; end_date?: string }) =>
-      `- ${p.name}: ${p.status} (${p.start_date ?? "?"} to ${p.end_date ?? "ongoing"})`
+    (p: { id: string; name: string; status: string; start_date?: string; end_date?: string }) =>
+      `- [${p.id}] ${p.name}: ${p.status} (${p.start_date ?? "?"} to ${p.end_date ?? "ongoing"})`
   )
   .join("\n")}`
     : ""
@@ -135,7 +135,7 @@ Return this exact JSON structure:
     "detected": true,
     "description": "Client approved the final cut",
     "suggestedAction": "Move to Delivered",
-    "phaseId": null
+    "phaseId": "the-exact-uuid-from-the-phases-list-or-null"
   },
   "mentionedDates": [
     {
@@ -148,7 +148,7 @@ Return this exact JSON structure:
 
 For smartInserts: generate 4 to 8 inserts. Be creative and UNRESTRICTED — include anything useful: project updates, asset links, clarifying questions, policies, context the sender doesn't have, historical references, scheduling notes, pricing terms, revision limits — whatever would genuinely improve this reply.
 
-For phaseSignal: look for clear language indicating project approval ("looks great", "approved", "sign off"), rejection/revision ("please redo", "change this"), or delivery ("received", "thank you for delivering").
+For phaseSignal: look for clear language indicating project approval ("looks great", "approved", "sign off"), rejection/revision ("please redo", "change this"), or delivery ("received", "thank you for delivering"). When detected, set phaseId to the UUID (the value inside the brackets) of the matching phase from the PROJECT PHASES list above. The phaseId MUST be one of those exact UUID strings, or null if no phases are listed or none match.
 
 For mentionedDates: extract any specific dates, days, or timeframes mentioned in the email thread. Convert to ISO if possible, otherwise set iso to null.`;
 

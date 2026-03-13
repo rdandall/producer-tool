@@ -32,7 +32,18 @@ const fieldClass =
   "w-full text-sm bg-background border border-border px-3 py-2 text-foreground " +
   "placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary transition-colors";
 
-export function NewProjectForm() {
+interface ClientOption {
+  id: string;
+  name: string;
+}
+
+interface Props {
+  clients?: ClientOption[];
+  defaultClientId?: string;
+  trigger?: React.ReactNode;
+}
+
+export function NewProjectForm({ clients = [], defaultClientId, trigger }: Props) {
   const [open, setOpen] = useState(false);
   const [color, setColor] = useState(COLORS[2]);
   const [brief, setBrief] = useState("");
@@ -59,10 +70,12 @@ export function NewProjectForm() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" className="gap-1.5 text-xs h-8">
-          <Plus className="w-3.5 h-3.5" />
-          New Project
-        </Button>
+        {trigger ?? (
+          <Button size="sm" className="gap-1.5 text-xs h-8">
+            <Plus className="w-3.5 h-3.5" />
+            New Project
+          </Button>
+        )}
       </DialogTrigger>
 
       <DialogContent className="max-w-md">
@@ -71,20 +84,37 @@ export function NewProjectForm() {
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4 mt-2">
-          {/* Title + Client */}
+          {/* Title */}
+          <div>
+            <label className="label-xs">Project Title *</label>
+            <input name="title" required placeholder="Brand Film" className={fieldClass} />
+          </div>
+
+          {/* Client + Status */}
           <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2">
-              <label className="label-xs">Project Title *</label>
-              <input name="title" required placeholder="Brand Film" className={fieldClass} />
-            </div>
             <div>
               <label className="label-xs">Client</label>
-              <input name="client" placeholder="Nike" className={fieldClass} />
+              {clients.length > 0 ? (
+                <select
+                  name="client_id"
+                  defaultValue={defaultClientId ?? ""}
+                  className={fieldClass}
+                >
+                  <option value="">— No client —</option>
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input name="client" placeholder="Nike" className={fieldClass} />
+              )}
             </div>
             <div>
               <label className="label-xs">Status</label>
               <select name="status" defaultValue="idea" className={fieldClass}>
-                {STATUS_OPTIONS.map(o => (
+                {STATUS_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
               </select>
@@ -100,7 +130,7 @@ export function NewProjectForm() {
                   type="checkbox"
                   name="ongoing"
                   checked={isOngoing}
-                  onChange={e => setIsOngoing(e.target.checked)}
+                  onChange={(e) => setIsOngoing(e.target.checked)}
                   className="w-3 h-3 accent-primary"
                 />
                 <span className="text-[10px] uppercase tracking-[0.08em] font-semibold text-muted-foreground/60">
@@ -158,7 +188,7 @@ export function NewProjectForm() {
           <div>
             <label className="label-xs">Colour</label>
             <div className="flex gap-2 mt-1.5">
-              {COLORS.map(c => (
+              {COLORS.map((c) => (
                 <button
                   key={c}
                   type="button"
@@ -176,7 +206,13 @@ export function NewProjectForm() {
           {error && <p className="text-xs text-destructive">{error}</p>}
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="outline" size="sm" className="text-xs h-8" onClick={() => setOpen(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="text-xs h-8"
+              onClick={() => setOpen(false)}
+            >
               Cancel
             </Button>
             <Button type="submit" size="sm" className="text-xs h-8" disabled={isPending}>

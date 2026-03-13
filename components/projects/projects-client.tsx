@@ -9,8 +9,14 @@ import { cn } from "@/lib/utils";
 import { NewProjectForm } from "@/components/projects/new-project-form";
 import type { Project } from "@/lib/db/projects";
 
+interface ClientOption {
+  id: string;
+  name: string;
+}
+
 interface Props {
   projects: Project[];
+  clients?: ClientOption[];
 }
 
 type ViewMode = "table" | "grid";
@@ -33,11 +39,39 @@ const STATUS_FILTERS = [
   "all", "idea", "pre-production", "filming", "editing", "review", "delivered",
 ] as const;
 
-export function ProjectsClient({ projects }: Props) {
+/** Group projects by client name (uses client_id display name, falls back to client text, then "Unassigned") */
+function groupByClient(
+  projects: Project[],
+  clients: ClientOption[]
+): Array<{ clientName: string; clientId: string | null; projects: Project[] }> {
+  const clientMap = new Map(clients.map((c) => [c.id, c.name]));
+  const groups = new Map<string, { clientName: string; clientId: string | null; projects: Project[] }>();
+
+  for (const p of projects) {
+    const clientId = p.client_id ?? null;
+    const key = clientId ?? p.client ?? "__unassigned__";
+    const clientName = clientId
+      ? (clientMap.get(clientId) ?? p.client ?? "Unknown Client")
+      : (p.client ?? "Unassigned");
+
+    if (!groups.has(key)) {
+      groups.set(key, { clientName, clientId, projects: [] });
+    }
+    groups.get(key)!.projects.push(p);
+  }
+
+  // Sort: named clients first (alphabetical), Unassigned last
+  return Array.from(groups.values()).sort((a, b) => {
+    if (a.clientId === null && b.clientId !== null) return 1;
+    if (a.clientId !== null && b.clientId === null) return -1;
+    return a.clientName.localeCompare(b.clientName);
+  });
+}
+
+export function ProjectsClient({ projects, clients = [] }: Props) {
   const [view, setView] = useState<ViewMode>("table");
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
-  // Restore saved view preference on mount
   useEffect(() => {
     const saved = localStorage.getItem("prdcr-projects-view") as ViewMode | null;
     if (saved) setView(saved);
@@ -54,6 +88,8 @@ export function ProjectsClient({ projects }: Props) {
     ? projects
     : projects.filter((p) => p.status === statusFilter);
 
+  const groups = groupByClient(filtered, clients);
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Page header */}
@@ -63,7 +99,7 @@ export function ProjectsClient({ projects }: Props) {
             Projects
           </h1>
           <span className="text-xs text-muted-foreground/50">
-            {filtered.length}{statusFilter !== "all" ? ` of ${projects.length}` : ""} active
+            {filtered.length}{statusFilter !== "all" ? ` of ${projects.length}` : ""} projects
           </span>
         </div>
         <div className="flex items-center gap-3">
@@ -94,7 +130,7 @@ export function ProjectsClient({ projects }: Props) {
               <LayoutGrid className="w-3.5 h-3.5" />
             </button>
           </div>
-          <NewProjectForm />
+          <NewProjectForm clients={clients} />
         </div>
       </div>
 
@@ -122,25 +158,27 @@ export function ProjectsClient({ projects }: Props) {
 
       {/* Content */}
       {view === "table" ? (
-        <TableView projects={filtered} />
+        <TableView groups={groups} />
       ) : (
-        <GridView projects={filtered} />
+        <GridView groups={groups} />
       )}
     </div>
   );
 }
 
 /* ── Table View ──────────────────────────────────────────── */
-function TableView({ projects }: { projects: Project[] }) {
+function TableView({
+  groups,
+}: {
+  groups: Array<{ clientName: string; clientId: string | null; projects: Project[] }>;
+}) {
+  const allEmpty = groups.every((g) => g.projects.length === 0);
   return (
     <div className="flex-1 overflow-auto">
       <table className="w-full min-w-[640px]">
         <thead>
           <tr className="border-b border-border">
             <th className="text-left px-8 py-3 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/60 w-[220px]">
-              Client
-            </th>
-            <th className="text-left px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/60">
               Project
             </th>
             <th className="text-left px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground/60 w-[140px]">
@@ -156,82 +194,82 @@ function TableView({ projects }: { projects: Project[] }) {
         </thead>
 
         <tbody>
-          {projects.map((project) => {
-            const status = STATUS_CONFIG[project.status];
-            const edit = currentEditLabel(project);
-            const openTasks = (project.tasks ?? []).filter((t) => !t.completed).length;
-            const due = project.due_date ? daysUntil(project.due_date) : null;
-
-            return (
-              <tr
-                key={project.id}
-                className="group border-b border-border/50 hover:bg-accent/30 transition-colors cursor-pointer"
-              >
-                <td className="px-8 py-4">
-                  <Link href={`/dashboard/projects/${project.id}`} className="flex items-center gap-3">
-                    <div className="w-1.5 h-8 rounded-sm shrink-0" style={{ backgroundColor: project.color }} />
-                    <div>
-                      <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">
-                        {project.client ?? "\u2014"}
-                      </p>
-                      <p className="text-xs text-muted-foreground/40 mt-0.5">
-                        {openTasks} open task{openTasks !== 1 ? "s" : ""}
-                      </p>
-                    </div>
-                  </Link>
-                </td>
-
-                <td className="px-4 py-4">
-                  <Link href={`/dashboard/projects/${project.id}`} className="flex items-center gap-2 group/link">
-                    <span className="text-[15px] font-semibold text-foreground group-hover/link:text-primary transition-colors">
-                      {project.title}
-                    </span>
-                    <ArrowUpRight className="w-3.5 h-3.5 text-muted-foreground/30 opacity-0 group-hover/link:opacity-100 transition-opacity" />
-                  </Link>
-                  {project.brief && (
-                    <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1 max-w-md">
-                      {project.brief}
-                    </p>
-                  )}
-                </td>
-
-                <td className="px-4 py-4">
-                  {status && (
-                    <span className={cn("status-pill", status.bg, status.color)}>
-                      <span className={cn("w-1.5 h-1.5 rounded-full", status.dot)} />
-                      {status.label}
-                    </span>
-                  )}
-                </td>
-
-                <td className="px-4 py-4">
-                  <span className="text-muted-foreground font-mono text-xs">
-                    {edit}
-                  </span>
-                </td>
-
-                <td className="px-8 py-4 text-right">
-                  {due ? (
-                    <span className={cn(
-                      "text-sm font-medium tabular-nums",
-                      due.overdue ? "text-destructive" : "text-muted-foreground"
-                    )}>
-                      {due.label}
-                    </span>
-                  ) : (
-                    <span className="text-sm text-muted-foreground/30">{"\u2014"}</span>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-
-          {projects.length === 0 && (
+          {allEmpty && (
             <tr>
-              <td colSpan={5} className="px-8 py-16 text-center text-sm text-muted-foreground">
+              <td colSpan={4} className="px-8 py-16 text-center text-sm text-muted-foreground">
                 No projects yet. Create your first one.
               </td>
             </tr>
+          )}
+
+          {groups.map((group) =>
+            group.projects.length === 0 ? null : (
+              <>
+                {/* Client header row */}
+                <tr key={`header-${group.clientName}`} className="border-b border-border/40 bg-sidebar-accent/20">
+                  <td colSpan={4} className="px-8 py-2">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">
+                      {group.clientName}
+                    </span>
+                  </td>
+                </tr>
+
+                {group.projects.map((project) => {
+                  const status = STATUS_CONFIG[project.status];
+                  const edit = currentEditLabel(project);
+                  const openTasks = (project.tasks ?? []).filter((t) => !t.completed).length;
+                  const due = project.due_date ? daysUntil(project.due_date) : null;
+
+                  return (
+                    <tr
+                      key={project.id}
+                      className="group border-b border-border/50 hover:bg-accent/30 transition-colors cursor-pointer"
+                    >
+                      <td className="px-8 py-4">
+                        <Link href={`/dashboard/projects/${project.id}`} className="flex items-center gap-3">
+                          <div className="w-1.5 h-8 rounded-sm shrink-0" style={{ backgroundColor: project.color }} />
+                          <div>
+                            <p className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors flex items-center gap-1.5">
+                              {project.title}
+                              <ArrowUpRight className="w-3.5 h-3.5 text-muted-foreground/20 opacity-0 group-hover:opacity-100 transition-opacity" />
+                            </p>
+                            <p className="text-xs text-muted-foreground/40 mt-0.5">
+                              {openTasks} open task{openTasks !== 1 ? "s" : ""}
+                            </p>
+                          </div>
+                        </Link>
+                      </td>
+
+                      <td className="px-4 py-4">
+                        {status && (
+                          <span className={cn("status-pill", status.bg, status.color)}>
+                            <span className={cn("w-1.5 h-1.5 rounded-full", status.dot)} />
+                            {status.label}
+                          </span>
+                        )}
+                      </td>
+
+                      <td className="px-4 py-4">
+                        <span className="text-muted-foreground font-mono text-xs">{edit}</span>
+                      </td>
+
+                      <td className="px-8 py-4 text-right">
+                        {due ? (
+                          <span className={cn(
+                            "text-sm font-medium tabular-nums",
+                            due.overdue ? "text-destructive" : "text-muted-foreground"
+                          )}>
+                            {due.label}
+                          </span>
+                        ) : (
+                          <span className="text-sm text-muted-foreground/30">{"\u2014"}</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </>
+            )
           )}
         </tbody>
       </table>
@@ -240,74 +278,87 @@ function TableView({ projects }: { projects: Project[] }) {
 }
 
 /* ── Grid View ───────────────────────────────────────────── */
-function GridView({ projects }: { projects: Project[] }) {
+function GridView({
+  groups,
+}: {
+  groups: Array<{ clientName: string; clientId: string | null; projects: Project[] }>;
+}) {
+  const allEmpty = groups.every((g) => g.projects.length === 0);
+
+  if (allEmpty) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <p className="text-sm text-muted-foreground">No projects yet. Create your first one.</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex-1 overflow-auto px-4 py-4 sm:px-8 sm:py-6">
-      {projects.length === 0 ? (
-        <div className="text-center py-16">
-          <p className="text-sm text-muted-foreground">No projects yet. Create your first one.</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {projects.map((project) => {
-            const status = STATUS_CONFIG[project.status];
-            const openTasks = (project.tasks ?? []).filter((t) => !t.completed).length;
-            const due = project.due_date ? daysUntil(project.due_date) : null;
+    <div className="flex-1 overflow-auto px-4 py-4 sm:px-8 sm:py-6 space-y-8">
+      {groups.map((group) =>
+        group.projects.length === 0 ? null : (
+          <div key={group.clientName}>
+            {/* Client group header */}
+            <div className="flex items-center gap-3 mb-3">
+              <h2 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">
+                {group.clientName}
+              </h2>
+              <div className="flex-1 h-px bg-border/40" />
+              <span className="text-[10px] text-muted-foreground/40">
+                {group.projects.length}
+              </span>
+            </div>
 
-            return (
-              <Link
-                key={project.id}
-                href={`/dashboard/projects/${project.id}`}
-                className="group block border border-border hover:border-border/80 hover:shadow-md transition-all"
-              >
-                {/* Color accent bar */}
-                <div className="h-1" style={{ backgroundColor: project.color }} />
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {group.projects.map((project) => {
+                const status = STATUS_CONFIG[project.status];
+                const openTasks = (project.tasks ?? []).filter((t) => !t.completed).length;
+                const due = project.due_date ? daysUntil(project.due_date) : null;
 
-                <div className="p-5">
-                  {/* Client + Status */}
-                  <div className="flex items-start justify-between gap-2 mb-3">
-                    <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">
-                      {project.client ?? "Personal"}
-                    </p>
-                    {status && (
-                      <span className={cn("status-pill text-[10px] shrink-0", status.bg, status.color)}>
-                        <span className={cn("w-1.5 h-1.5 rounded-full", status.dot)} />
-                        {status.label}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Title */}
-                  <h3 className="text-base font-bold text-foreground leading-snug mb-2 group-hover:text-primary transition-colors">
-                    {project.title}
-                  </h3>
-
-                  {/* Brief preview */}
-                  {project.brief && (
-                    <p className="text-xs text-muted-foreground line-clamp-2 mb-4 leading-relaxed">
-                      {project.brief}
-                    </p>
-                  )}
-
-                  {/* Bottom row */}
-                  <div className="flex items-center justify-between pt-3 border-t border-border/40">
-                    <span className="text-[11px] text-muted-foreground">
-                      {openTasks} task{openTasks !== 1 ? "s" : ""}
-                    </span>
-                    {due && (
-                      <span className={cn(
-                        "text-[11px] font-medium tabular-nums",
-                        due.overdue ? "text-destructive" : "text-muted-foreground"
-                      )}>
-                        {due.label}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </Link>
-            );
-          })}
-        </div>
+                return (
+                  <Link
+                    key={project.id}
+                    href={`/dashboard/projects/${project.id}`}
+                    className="group block border border-border hover:border-border/80 hover:shadow-md transition-all"
+                  >
+                    <div className="h-1" style={{ backgroundColor: project.color }} />
+                    <div className="p-5">
+                      <div className="flex items-start justify-between gap-2 mb-3">
+                        {status && (
+                          <span className={cn("status-pill text-[10px] shrink-0", status.bg, status.color)}>
+                            <span className={cn("w-1.5 h-1.5 rounded-full", status.dot)} />
+                            {status.label}
+                          </span>
+                        )}
+                      </div>
+                      <h3 className="text-base font-bold text-foreground leading-snug mb-2 group-hover:text-primary transition-colors">
+                        {project.title}
+                      </h3>
+                      {project.brief && (
+                        <p className="text-xs text-muted-foreground line-clamp-2 mb-4 leading-relaxed">
+                          {project.brief}
+                        </p>
+                      )}
+                      <div className="flex items-center justify-between pt-3 border-t border-border/40">
+                        <span className="text-[11px] text-muted-foreground">
+                          {openTasks} task{openTasks !== 1 ? "s" : ""}
+                        </span>
+                        {due && (
+                          <span className={cn(
+                            "text-[11px] font-medium tabular-nums",
+                            due.overdue ? "text-destructive" : "text-muted-foreground"
+                          )}>
+                            {due.label}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        )
       )}
     </div>
   );

@@ -14,6 +14,7 @@ export default async function SettingsPage() {
     emailSyncLimitRaw,
     noteDefaultType,
     emailFromAddress,
+    emailTaskFilterRaw,
   ] = await Promise.all([
     getSetting("session_version"),
     getSetting("site_password"),
@@ -26,6 +27,7 @@ export default async function SettingsPage() {
     getSetting("email_sync_limit"),
     getSetting("note_default_type"),
     getSetting("email_from_address"),
+    getSetting("email_task_filter_addresses"),
   ]);
 
   const sessionVersion = parseInt(sessionVersionRaw ?? "1", 10) || 1;
@@ -35,6 +37,7 @@ export default async function SettingsPage() {
   const hasToneProfile = !!toneProfileRaw;
   const toneSampleCount = parseInt(toneSampleCountRaw ?? "0", 10) || 0;
   const emailSyncLimit = parseInt(emailSyncLimitRaw ?? "50", 10) || 50;
+  const emailTaskFilterAddresses: string[] = emailTaskFilterRaw ? JSON.parse(emailTaskFilterRaw) : [];
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -58,6 +61,7 @@ export default async function SettingsPage() {
         emailSyncLimit={emailSyncLimit}
         noteDefaultType={(noteDefaultType ?? "brief") as "brief" | "meeting-notes" | "project-notes" | "client-brief"}
         emailFromAddress={emailFromAddress ?? ""}
+        emailTaskFilterAddresses={emailTaskFilterAddresses}
       />
       </div>
     </div>

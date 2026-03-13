@@ -97,15 +97,28 @@ export async function createProjectAction(formData: FormData) {
   const rawClientEmail = formData.get("client_email")  as string;
   const rawBrief       = formData.get("brief")         as string;
   const rawClient      = formData.get("client")        as string;
+  const rawClientId    = formData.get("client_id")     as string;
   const rawOngoing     = formData.get("ongoing")       as string;
 
   const ongoing = rawOngoing === "on" || rawOngoing === "true";
+
+  // If client_id is supplied, resolve its name for the legacy client text field
+  let clientName: string | null = rawClient || null;
+  if (rawClientId) {
+    const { data: clientRow } = await supabase
+      .from("clients")
+      .select("name")
+      .eq("id", rawClientId)
+      .single();
+    if (clientRow) clientName = clientRow.name;
+  }
 
   const { data, error } = await supabase
     .from("projects")
     .insert({
       title,
-      client:       rawClient      || null,
+      client:       clientName,
+      client_id:    rawClientId    || null,
       status:      (formData.get("status") as string) || "idea",
       brief:        rawBrief       || null,
       due_date:     ongoing ? null : (rawDueDate || null),
@@ -286,6 +299,66 @@ export async function dismissEmailTaskSuggestionAction(suggestionId: string) {
   revalidatePath("/dashboard/email");
 }
 
+// ── Client actions ────────────────────────────────────────────────────────
+
+export async function createClientAction(formData: FormData) {
+  const supabase = await createClient();
+
+  const name = (formData.get("name") as string)?.trim();
+  if (!name) throw new Error("Client name is required");
+
+  const { data, error } = await supabase
+    .from("clients")
+    .insert({
+      name,
+      color:         (formData.get("color")         as string) || "#3b82f6",
+      contact_name:  (formData.get("contact_name")  as string) || null,
+      contact_email: (formData.get("contact_email") as string) || null,
+      notes:         (formData.get("notes")         as string) || null,
+    })
+    .select("id")
+    .single();
+
+  if (error) throw new Error(error.message);
+  revalidatePath("/dashboard", "layout");
+  return data.id;
+}
+
+export async function updateClientAction(
+  clientId: string,
+  updates: {
+    name?: string;
+    color?: string;
+    contact_name?: string | null;
+    contact_email?: string | null;
+    notes?: string | null;
+  }
+) {
+  const supabase = await createClient();
+  const { error } = await supabase.from("clients").update(updates).eq("id", clientId);
+  if (error) throw new Error(error.message);
+  revalidatePath("/dashboard", "layout");
+}
+
+export async function deleteClientAction(clientId: string) {
+  const supabase = await createClient();
+  // projects.client_id will be set to null via ON DELETE SET NULL
+  const { error } = await supabase.from("clients").delete().eq("id", clientId);
+  if (error) throw new Error(error.message);
+  revalidatePath("/dashboard", "layout");
+}
+
+/** Update project's client assignment */
+export async function updateProjectClientAction(projectId: string, clientId: string | null) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("projects")
+    .update({ client_id: clientId })
+    .eq("id", projectId);
+  if (error) throw new Error(error.message);
+  revalidatePath("/dashboard", "layout");
+}
+
 // ── Settings actions ───────────────────────────────────────────────────────
 
 async function getCurrentSitePassword(): Promise<string> {
@@ -363,6 +436,12 @@ export async function disconnectGmailAction(): Promise<void> {
     setSetting("gmail_user_email", ""),
   ]);
   revalidatePath("/dashboard", "layout");
+}
+
+/** Save the email task extraction sender allowlist. */
+export async function saveEmailTaskFilterAction(addresses: string[]): Promise<void> {
+  await setSetting("email_task_filter_addresses", JSON.stringify(addresses));
+  revalidatePath("/dashboard/settings");
 }
 
 /** Disconnect Google Calendar by clearing all stored tokens. */

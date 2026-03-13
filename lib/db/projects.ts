@@ -45,6 +45,7 @@ export interface Project {
   id: string;
   title: string;
   client: string | null;
+  client_id: string | null;
   status: ProjectStatus;
   brief: string | null;
   due_date: string | null;

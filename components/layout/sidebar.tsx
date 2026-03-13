@@ -7,6 +7,7 @@ import {
   FolderKanban,
   FileText,
   Users,
+  Building2,
   LayoutDashboard,
   CheckSquare,
   PanelLeftClose,
@@ -20,13 +21,14 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 const navItems = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  { label: "Clients", href: "/dashboard/clients", icon: Building2 },
   { label: "Projects", href: "/dashboard/projects", icon: FolderKanban },
   { label: "Tasks", href: "/dashboard/tasks", icon: CheckSquare },
   { label: "Calendar", href: "/dashboard/calendar", icon: CalendarDays },
   { label: "Notes & Briefs", href: "/dashboard/notes", icon: FileText },
   { label: "Email", href: "/dashboard/email", icon: Mail },
   { label: "Settings", href: "/dashboard/settings", icon: Settings },
-  { label: "Team", href: "/dashboard/team", icon: Users, disabled: true },
+  { label: "Team", href: "/dashboard/team", icon: Users, disabled: true as const },
 ];
 
 interface SidebarProps {

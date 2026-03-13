@@ -12,6 +12,8 @@ import {
   Sparkles,
   Unlink,
   RotateCcw,
+  X,
+  Plus,
 } from "lucide-react";
 import {
   invalidateAllSessionsAction,
@@ -23,6 +25,7 @@ import {
   clearToneProfileAction,
   disconnectGmailAction,
   disconnectCalendarAction,
+  saveEmailTaskFilterAction,
 } from "@/app/actions";
 
 type NoteType = "brief" | "meeting-notes" | "project-notes" | "client-brief";
@@ -46,6 +49,7 @@ interface Props {
   emailSyncLimit: number;
   noteDefaultType: NoteType;
   emailFromAddress: string;
+  emailTaskFilterAddresses: string[];
 }
 
 // ── Section wrapper ─────────────────────────────────────────────────────────
@@ -93,6 +97,7 @@ export function SettingsClient({
   emailSyncLimit: initialSyncLimit,
   noteDefaultType: initialNoteDefaultType,
   emailFromAddress: initialFromAddress,
+  emailTaskFilterAddresses: initialFilterAddresses,
 }: Props) {
 
   // ── Connections state ──────────────────────────────────────────────────
@@ -108,6 +113,11 @@ export function SettingsClient({
   const [styleNoteLoading, setStyleNoteLoading] = useState(false);
   const [toneProfileExists, setToneProfileExists] = useState(hasToneProfile);
   const [clearToneLoading, setClearToneLoading] = useState(false);
+
+  // ── Email task filter allowlist state ─────────────────────────────────
+  const [filterAddresses, setFilterAddresses] = useState<string[]>(initialFilterAddresses);
+  const [newFilterAddress, setNewFilterAddress] = useState("");
+  const [filterSaving, setFilterSaving] = useState(false);
 
   // ── Notes & Briefs state ───────────────────────────────────────────────
   const [noteDefaultType, setNoteDefaultType] = useState<NoteType>(initialNoteDefaultType);
@@ -201,6 +211,43 @@ export function SettingsClient({
       toast.error("Failed to clear tone profile");
     } finally {
       setClearToneLoading(false);
+    }
+  }
+
+  // ── Email task filter handlers ─────────────────────────────────────────
+  async function handleAddFilterAddress(e: React.FormEvent) {
+    e.preventDefault();
+    const addr = newFilterAddress.trim().toLowerCase();
+    if (!addr) return;
+    if (filterAddresses.includes(addr)) {
+      toast.error("Address already in list");
+      return;
+    }
+    const updated = [...filterAddresses, addr];
+    setFilterSaving(true);
+    try {
+      await saveEmailTaskFilterAction(updated);
+      setFilterAddresses(updated);
+      setNewFilterAddress("");
+      toast.success("Sender added");
+    } catch {
+      toast.error("Failed to save");
+    } finally {
+      setFilterSaving(false);
+    }
+  }
+
+  async function handleRemoveFilterAddress(addr: string) {
+    const updated = filterAddresses.filter((a) => a !== addr);
+    setFilterSaving(true);
+    try {
+      await saveEmailTaskFilterAction(updated);
+      setFilterAddresses(updated);
+      toast.success("Sender removed");
+    } catch {
+      toast.error("Failed to save");
+    } finally {
+      setFilterSaving(false);
     }
   }
 
@@ -413,6 +460,61 @@ export function SettingsClient({
               Clear
             </button>
           )}
+        </div>
+
+        <div className="border-t border-border/30" />
+
+        {/* Task extraction allowlist */}
+        <div className="space-y-3">
+          <Field label="Task Extraction — Allowed Senders">
+            <p className="text-xs text-muted-foreground/60 mb-2 leading-relaxed">
+              Only emails from these addresses are scanned for task suggestions during sync. Keeps noise out of your task queue.
+            </p>
+            {/* Existing chips */}
+            {filterAddresses.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {filterAddresses.map((addr) => (
+                  <span
+                    key={addr}
+                    className="flex items-center gap-1.5 px-2 py-1 text-[11px] bg-sidebar-accent/40 border border-border/50 text-foreground/80"
+                  >
+                    {addr}
+                    <button
+                      onClick={() => handleRemoveFilterAddress(addr)}
+                      disabled={filterSaving}
+                      className="text-muted-foreground/50 hover:text-destructive transition-colors disabled:opacity-40"
+                      title="Remove"
+                    >
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {filterAddresses.length === 0 && (
+              <p className="text-[11px] text-muted-foreground/40 mb-2 italic">
+                No senders added yet — task extraction won&apos;t run automatically.
+              </p>
+            )}
+            {/* Add new */}
+            <form onSubmit={handleAddFilterAddress} className="flex items-center gap-2">
+              <input
+                type="email"
+                value={newFilterAddress}
+                onChange={(e) => setNewFilterAddress(e.target.value)}
+                placeholder="client@example.com"
+                className="flex-1 bg-transparent border border-border px-3 py-1.5 text-xs outline-none focus:border-foreground transition-colors"
+              />
+              <button
+                type="submit"
+                disabled={filterSaving || !newFilterAddress.trim()}
+                className="flex items-center gap-1 px-3 py-1.5 text-xs border border-border/50 text-muted-foreground hover:text-foreground hover:border-border transition-colors disabled:opacity-40"
+              >
+                {filterSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                Add
+              </button>
+            </form>
+          </Field>
         </div>
       </Section>
 
