@@ -32,6 +32,7 @@ export async function POST(req: NextRequest) {
     phases,
     tasks,
     variantType, // optional — regenerate only one variant
+    userNotes,   // optional — dictated notes/instructions from user
   } = body;
 
   const [toneProfile, styleNote] = await Promise.all([
@@ -104,6 +105,14 @@ ${tasks
       `- ${t.title} (${t.priority ?? "medium"} priority, due: ${t.due_date ?? "no date"})`
   )
   .join("\n")}`
+    : ""
+}
+
+${
+  userNotes
+    ? `USER'S DICTATED NOTES / REPLY INSTRUCTIONS:
+The user has spoken or typed the following notes about how they want to reply. Prioritize these instructions and incorporate them into the generated responses:
+${userNotes}`
     : ""
 }
 

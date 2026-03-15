@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState, useCallback } from "react";
-import { Send, Zap, X, Settings, Loader2, Bold, Italic, Underline, Link, List, Edit3, Paperclip, ChevronDown } from "lucide-react";
+import { useRef, useState, useCallback, useEffect } from "react";
+import { Send, Zap, X, Settings, Loader2, Bold, Italic, Underline, Link, List, Edit3, Paperclip, ChevronDown, Mic, MicOff, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { StoredEmail } from "@/lib/db/emails";
@@ -81,6 +81,72 @@ export function EmailComposePanel({
   const [ccRecipients, setCcRecipients] = useState<Contact[]>([]);
   const [showCc, setShowCc] = useState(false);
 
+  // Dictation state
+  const [dictationNotes, setDictationNotes] = useState("");
+  const [isListening, setIsListening] = useState(false);
+  const [showDictation, setShowDictation] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
+
+  // Clean up speech recognition on unmount
+  useEffect(() => {
+    return () => {
+      recognitionRef.current?.stop();
+    };
+  }, []);
+
+  function toggleDictation() {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SR) {
+      toast.error("Speech recognition not supported in this browser.");
+      return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const recognition = new SR() as any;
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognitionRef.current = recognition;
+
+    let finalTranscript = dictationNotes;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onresult = (event: any) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += (finalTranscript ? " " : "") + t.trim();
+        } else {
+          interim = t;
+        }
+      }
+      setDictationNotes(finalTranscript + (interim ? " " + interim : ""));
+    };
+
+    recognition.onend = () => {
+      setDictationNotes(finalTranscript);
+      setIsListening(false);
+    };
+
+    recognition.onerror = () => {
+      setIsListening(false);
+    };
+
+    recognition.start();
+    setIsListening(true);
+    setShowDictation(true);
+  }
+
   // Rich text editor ref (manual mode)
   const editorRef = useRef<HTMLDivElement>(null);
   // File input ref for attachments
@@ -124,6 +190,7 @@ export function EmailComposePanel({
           projectContext: project ?? null,
           phases: relevantPhases,
           tasks: relevantTasks,
+          userNotes: dictationNotes.trim() || undefined,
         }),
       });
 
@@ -169,6 +236,7 @@ export function EmailComposePanel({
           phases: relevantPhases,
           tasks: [],
           variantType: type,
+          userNotes: dictationNotes.trim() || undefined,
         }),
       });
 
@@ -424,6 +492,70 @@ export function EmailComposePanel({
               Regenerate all variants
             </button>
           )}
+
+          {/* Dictation notes */}
+          <div className="border border-border/50">
+            <button
+              onClick={() => setShowDictation((v) => !v)}
+              className="w-full flex items-center justify-between px-3 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors bg-sidebar-accent/10"
+            >
+              <div className="flex items-center gap-1.5">
+                <Mic className="w-3 h-3" />
+                <span>Dictation notes</span>
+                {dictationNotes && (
+                  <span className="text-[10px] text-primary/70 font-medium">● active</span>
+                )}
+              </div>
+              <ChevronDown className={cn("w-3 h-3 transition-transform", showDictation && "rotate-180")} />
+            </button>
+            {showDictation && (
+              <div className="p-3 space-y-2 border-t border-border/50">
+                <p className="text-[11px] text-muted-foreground">
+                  Speak your reply ideas or instructions. Claude will use these when generating.
+                </p>
+                <div className="relative">
+                  <textarea
+                    value={dictationNotes}
+                    onChange={(e) => setDictationNotes(e.target.value)}
+                    placeholder="Tap the mic and start talking, or type here..."
+                    rows={4}
+                    className="w-full resize-none text-xs text-foreground bg-sidebar-accent/30 border border-border p-2.5 focus:outline-none focus:border-primary/50 placeholder:text-muted-foreground/40 leading-relaxed"
+                  />
+                  {isListening && (
+                    <div className="absolute top-2 right-2 flex items-center gap-1 text-[10px] text-red-400">
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+                      Listening
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={toggleDictation}
+                    className={cn(
+                      "flex items-center gap-1.5 text-xs px-3 py-1.5 border transition-colors",
+                      isListening
+                        ? "border-red-400/60 text-red-400 hover:bg-red-400/10"
+                        : "border-border text-muted-foreground hover:text-foreground hover:border-primary/40"
+                    )}
+                  >
+                    {isListening ? (
+                      <><MicOff className="w-3 h-3" /> Stop</>
+                    ) : (
+                      <><Mic className="w-3 h-3" /> {dictationNotes ? "Continue" : "Start"}</>
+                    )}
+                  </button>
+                  {dictationNotes && (
+                    <button
+                      onClick={() => { setDictationNotes(""); recognitionRef.current?.stop(); setIsListening(false); }}
+                      className="flex items-center gap-1 text-xs text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+                    >
+                      <Trash2 className="w-3 h-3" /> Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Variants */}
           <ResponseVariants
