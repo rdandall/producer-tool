@@ -142,24 +142,47 @@ Rules:
     const message = await client.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 2000,
-      messages: [
+      tools: [
         {
-          role: "user",
-          content: rawInput,
+          name: "generate_document",
+          description: "Generate a structured document from raw input",
+          input_schema: {
+            type: "object" as const,
+            properties: {
+              title: { type: "string" },
+              content: { type: "string" },
+              extractedTasks: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    title: { type: "string" },
+                    assignedTo: { type: "string" },
+                    priority: { type: "string", enum: ["high", "medium", "low"] },
+                    dueHint: { type: "string" },
+                  },
+                  required: ["title", "priority"],
+                },
+              },
+            },
+            required: ["title", "content", "extractedTasks"],
+          },
         },
       ],
+      tool_choice: { type: "tool", name: "generate_document" },
+      messages: [{ role: "user", content: rawInput }],
       system: systemPrompt,
     });
 
-    const responseText = message.content[0].type === "text" ? message.content[0].text : "";
-
-    // Parse JSON from response
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error("AI did not return valid JSON");
+    const toolUse = message.content.find((b) => b.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") {
+      throw new Error("AI did not return a tool use response");
     }
-
-    const parsed = JSON.parse(jsonMatch[0]);
+    const parsed = toolUse.input as {
+      title: string;
+      content: string;
+      extractedTasks: Array<{ title: string; assignedTo?: string; priority: string; dueHint?: string }>;
+    };
 
     return NextResponse.json({
       title: parsed.title ?? "Untitled Note",

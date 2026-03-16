@@ -166,15 +166,68 @@ For mentionedDates: extract any specific dates, days, or timeframes mentioned in
       model: "claude-sonnet-4-6",
       max_tokens: 3000,
       system: systemPrompt,
+      tools: [
+        {
+          name: "generate_email_response",
+          description: "Generate email reply variants and analysis",
+          input_schema: {
+            type: "object" as const,
+            properties: {
+              variants: {
+                type: "object",
+                properties: {
+                  punchy: { type: "string" },
+                  balanced: { type: "string" },
+                  detailed: { type: "string" },
+                },
+                required: variantType ? [variantType] : ["punchy", "balanced", "detailed"],
+              },
+              smartInserts: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    label: { type: "string" },
+                    text: { type: "string" },
+                  },
+                  required: ["label", "text"],
+                },
+              },
+              phaseSignal: {
+                type: "object",
+                properties: {
+                  detected: { type: "boolean" },
+                  description: { type: "string" },
+                  suggestedAction: { type: "string" },
+                  phaseId: { type: "string" },
+                },
+                required: ["detected", "description", "suggestedAction"],
+              },
+              mentionedDates: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    raw: { type: "string" },
+                    iso: { type: "string" },
+                    context: { type: "string" },
+                  },
+                  required: ["raw", "context"],
+                },
+              },
+            },
+            required: ["variants", "smartInserts", "mentionedDates"],
+          },
+        },
+      ],
+      tool_choice: { type: "tool", name: "generate_email_response" },
       messages: [{ role: "user", content: userPrompt }],
     });
 
-    const text =
-      message.content[0].type === "text" ? message.content[0].text : "";
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("No valid JSON in AI response");
+    const toolUse = message.content.find((b) => b.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") throw new Error("No tool use in AI response");
 
-    const result: GenerateResponseResult = JSON.parse(jsonMatch[0]);
+    const result = toolUse.input as GenerateResponseResult;
     return NextResponse.json(result);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Generation failed";
