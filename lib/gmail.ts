@@ -311,6 +311,28 @@ export async function searchSentEmails(
   return messages;
 }
 
+// ── Signature ─────────────────────────────────────────────────────────────────
+
+/** Fetch the default Gmail signature (HTML string) for the authed account. */
+export async function getGmailSignature(accessToken: string): Promise<string> {
+  try {
+    const res = await fetch(`${GMAIL_BASE}/settings/sendAs`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) return "";
+    const data = await res.json();
+    const entries: Array<{ isDefault?: boolean; isPrimary?: boolean; signature?: string }> =
+      data.sendAs ?? [];
+    const entry =
+      entries.find((e) => e.isDefault) ??
+      entries.find((e) => e.isPrimary) ??
+      entries[0];
+    return entry?.signature ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export async function sendGmailReply(
   accessToken: string,
   options: {

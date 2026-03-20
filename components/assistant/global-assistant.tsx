@@ -282,6 +282,11 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
           break;
         }
 
+        case "query_response":
+          // Answer is shown inline — no execution needed, just dismiss
+          dismiss();
+          break;
+
         default:
           toast.info("I couldn't complete that action. Try rephrasing.");
           dismiss();
@@ -410,8 +415,38 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
                 </div>
               )}
 
+              {/* Query answer — no confirm step, just show the answer */}
+              {action && state === "confirming" && action.intent === "query_response" && (
+                <>
+                  {transcript && (
+                    <div className="space-y-1">
+                      <p className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium">
+                        You asked
+                      </p>
+                      <p className="text-sm text-foreground/60 italic leading-relaxed">
+                        &ldquo;{transcript}&rdquo;
+                      </p>
+                    </div>
+                  )}
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium">
+                      Answer
+                    </p>
+                    <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
+                      {action.action_params.answer || action.summary}
+                    </p>
+                  </div>
+                  <button
+                    onClick={dismiss}
+                    className="w-full text-xs py-2 border border-border/50 text-muted-foreground hover:text-foreground hover:border-border transition-colors"
+                  >
+                    Got it
+                  </button>
+                </>
+              )}
+
               {/* Action confirmation */}
-              {action && state === "confirming" && (
+              {action && state === "confirming" && action.intent !== "query_response" && (
                 <>
                   {transcript && (
                     <div className="space-y-1">

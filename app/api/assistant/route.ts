@@ -2,21 +2,75 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { getProjects } from "@/lib/db/projects";
 import { getAllEmails } from "@/lib/db/emails";
+import { getAllTasks } from "@/lib/db/tasks";
+import { createClient } from "@/lib/supabase/server";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+async function getUpcomingEvents() {
+  try {
+    const supabase = await createClient();
+    const { data } = await supabase
+      .from("calendar_events")
+      .select("summary, starts_at, ends_at, location, description, all_day")
+      .gte("starts_at", new Date().toISOString())
+      .order("starts_at", { ascending: true })
+      .limit(30);
+    return data ?? [];
+  } catch {
+    return [];
+  }
+}
 
 export async function POST(req: NextRequest) {
   const { transcript, page } = await req.json();
 
-  const projects = await getProjects();
+  const today = new Date().toISOString().split("T")[0];
+
+  const [projects, allTasks, events, emails] = await Promise.all([
+    getProjects().catch(() => []),
+    getAllTasks().catch(() => []),
+    getUpcomingEvents(),
+    getAllEmails().catch(() => []),
+  ]);
+
   const projectList = projects
-    .map((p) => `- "${p.title}"${p.client ? ` (client: ${p.client})` : ""} [id: ${p.id}]`)
+    .map((p) => {
+      const phases = (p.phases ?? [])
+        .map(
+          (ph: { name: string; status: string; start_date?: string | null; end_date?: string | null }) =>
+            `    • ${ph.name} [${ph.status}]${ph.start_date ? ` ${ph.start_date}${ph.end_date ? "→" + ph.end_date : ""}` : ""}`
+        )
+        .join("\n");
+      return `- "${p.title}"${p.client ? ` (client: ${p.client})` : ""} [status: ${p.status}] [id: ${p.id}]${
+        p.editor_name ? ` — editor: ${p.editor_name}` : ""
+      }${phases ? `\n  Phases:\n${phases}` : ""}`;
+    })
     .join("\n");
 
-  // Try to fetch recent inbox threads for reply matching
+  const taskList = allTasks
+    .filter((t) => !t.completed)
+    .slice(0, 40)
+    .map(
+      (t) =>
+        `- "${t.title}"${t.due_date ? ` [due: ${t.due_date}]` : ""} [priority: ${t.priority}]${
+          t.projects ? ` [project: ${t.projects.title}]` : ""
+        }${t.assigned_to ? ` [assigned: ${t.assigned_to}]` : ""}`
+    )
+    .join("\n");
+
+  const eventList = events
+    .slice(0, 20)
+    .map(
+      (e: { summary?: string | null; starts_at: string; all_day?: boolean; location?: string | null }) =>
+        `- "${e.summary ?? "(no title)"}" on ${e.starts_at.split("T")[0]}${
+          !e.all_day ? ` at ${e.starts_at.split("T")[1]?.slice(0, 5)}` : ""
+        }${e.location ? ` @ ${e.location}` : ""}`
+    )
+    .join("\n");
+
   let emailContext = "none available";
   try {
-    const emails = await getAllEmails();
     const threadMap = new Map<string, (typeof emails)[0]>();
     for (const email of emails) {
       if (!email.is_sent && email.gmail_thread_id && !threadMap.has(email.gmail_thread_id)) {
@@ -33,26 +87,30 @@ export async function POST(req: NextRequest) {
         .join("\n");
     }
   } catch {
-    // Gmail not connected or table missing — safe to ignore
+    // safe
   }
 
-  const today = new Date().toISOString().split("T")[0];
-
-  const systemPrompt = `You are an executive assistant for PRDCR, a producer management tool for video/creative producers. Parse voice commands into structured actions.
+  const systemPrompt = `You are an executive assistant for PRDCR, a producer management tool for a freelance video producer. Parse commands OR answer questions using the context below.
 
 Today: ${today}
 Current page: ${page}
 
-Available projects:
+=== PROJECTS (with phases) ===
 ${projectList || "none"}
 
-Recent inbox email threads:
+=== OPEN TASKS (incomplete) ===
+${taskList || "none"}
+
+=== UPCOMING CALENDAR EVENTS ===
+${eventList || "none"}
+
+=== RECENT INBOX THREADS ===
 ${emailContext}
 
 Return ONLY valid JSON (no markdown fences) with this shape:
 {
-  "intent": "create_task" | "reply_email" | "compose_email" | "add_calendar_event" | "create_note" | "navigate" | "unknown",
-  "summary": "One clear sentence describing the action — shown to user for confirmation before anything happens",
+  "intent": "create_task" | "reply_email" | "compose_email" | "add_calendar_event" | "create_note" | "navigate" | "query_response" | "unknown",
+  "summary": "One sentence describing the action or answering the question",
   "action_params": { ... }
 }
 
@@ -63,18 +121,20 @@ action_params by intent:
 - add_calendar_event: { "title": string, "date"?: "YYYY-MM-DD", "time"?: string, "duration"?: string, "location"?: string, "notes"?: string }
 - create_note: { "type"?: "brief"|"meeting-notes"|"project-notes"|"client-brief", "title"?: string, "project_name"?: string }
 - navigate: { "page": string, "path": "/dashboard"|"/dashboard/email"|"/dashboard/tasks"|"/dashboard/calendar"|"/dashboard/notes"|"/dashboard/projects" }
+- query_response: { "answer": string }
 - unknown: { "message": string }
 
-Rules:
-- For create_task: match mentioned project names to the projects list, include project_id when matched
-- For reply_email: match sender name or subject to inbox threads, include thread_id when you find a match
-- Dates: calculate relative dates from today (${today}). "Tomorrow" → next day, "next Monday" → next Monday
-- Keep summary concise and specific, e.g. "Create a high-priority task 'Send contract to Nike' due March 20"
-- Be confident — pick the most likely intent even when details are sparse`;
+RULES:
+- Use query_response for ANY question about project status, phases, editors, clients, tasks, schedule, upcoming events, or any info that can be answered from the context above. Put a full clear answer in action_params.answer.
+- For create_task: match project names to the list, include project_id when matched
+- For reply_email: match sender name or subject to inbox threads
+- For compose_email with specific message content: put the message in action_params.hint
+- Dates: calculate from today (${today}). "Tomorrow" = ${new Date(Date.now() + 86400000).toISOString().split("T")[0]}, "next Monday" = calculate correctly
+- Keep summary short and specific. Be confident — always pick the most likely intent.`;
 
   const msg = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 512,
+    max_tokens: 1024,
     system: systemPrompt,
     messages: [{ role: "user", content: transcript }],
   });
@@ -85,7 +145,7 @@ Rules:
   try {
     const parsed = match
       ? JSON.parse(match[0])
-      : { intent: "unknown", summary: "I couldn't understand that command.", action_params: { message: raw } };
+      : { intent: "unknown", summary: "I couldn't understand that.", action_params: { message: raw } };
     return NextResponse.json(parsed);
   } catch {
     return NextResponse.json({

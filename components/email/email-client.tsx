@@ -253,9 +253,30 @@ export function EmailClient({
   useEffect(() => {
     const interval = setInterval(() => {
       if (!document.hidden) handleSync(true);
-    }, 60_000); // every 60s instead of 30s
+    }, 60_000); // every 60s
     return () => clearInterval(interval);
   }, [handleSync]);
+
+  // ── Scheduled send polling ── check every 60s for due emails, send them
+  useEffect(() => {
+    const checkScheduled = async () => {
+      try {
+        const res = await fetch("/api/email/send-scheduled", { method: "POST" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.sent > 0) {
+          toast.success(
+            `${data.sent} scheduled email${data.sent !== 1 ? "s" : ""} sent`
+          );
+        }
+      } catch {
+        // silent — don't disrupt the user
+      }
+    };
+    checkScheduled();
+    const interval = setInterval(checkScheduled, 60_000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleSelectThread = useCallback(
     (threadId: string, _latestMessageId?: string) => {
