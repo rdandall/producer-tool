@@ -1,10 +1,23 @@
 "use client";
 
-import { AlertTriangle, ArrowRight, CalendarPlus, ChevronDown, ChevronUp, GitBranch, Paperclip, X } from "lucide-react";
+import {
+  AlertTriangle,
+  CalendarPlus,
+  ChevronDown,
+  ChevronUp,
+  GitBranch,
+  Paperclip,
+  X,
+  Reply,
+  ReplyAll,
+  Forward,
+  ArrowRight,
+} from "lucide-react";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import type { StoredEmail } from "@/lib/db/emails";
+import { EmailComposePanel } from "./email-compose-panel";
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -33,19 +46,48 @@ interface PhaseSignal {
   phaseId: string | null;
 }
 
+interface Project {
+  id: string;
+  title: string;
+  client: string | null;
+  color: string;
+}
+
+interface Phase {
+  id: string;
+  name: string;
+  project_id: string;
+  status: string;
+  start_date: string | null;
+  end_date: string | null;
+}
+
+interface Task {
+  id: string;
+  title: string;
+  due_date: string | null;
+  project_id: string | null;
+}
+
 interface EmailThreadPanelProps {
   messages: StoredEmail[];
   dateConflicts: DateConflict[];
   mentionedDates: MentionedDate[];
   phaseSignal: PhaseSignal | null;
   calendarConnected: boolean;
-  currentSubject: string;
+  projects: Project[];
+  phases: Phase[];
+  tasks: Task[];
+  hasToneProfile: boolean;
+  userEmail: string;
   onDismissConflicts: () => void;
   onDismissPhaseSignal: () => void;
   onPhaseAction: (phaseId: string | null, action: string) => void;
   onCreateCalendarEvent: (params: { summary: string; date: string }) => void;
-  onReply: () => void;
+  onPhaseSignal: (signal: PhaseSignal) => void;
 }
+
+type ReplyMode = "reply" | "replyAll" | "forward";
 
 function formatTime(dateStr: string | null): string {
   if (!dateStr) return "";
@@ -54,12 +96,27 @@ function formatTime(dateStr: string | null): string {
   const isToday = date.toDateString() === now.toDateString();
   const isThisYear = date.getFullYear() === now.getFullYear();
   if (isToday) return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  if (isThisYear) return date.toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  if (isThisYear)
+    return date.toLocaleDateString([], {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   return date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
 }
 
 function getAvatarColor(name: string): string {
-  const palette = ["#3b82f6","#8b5cf6","#10b981","#ec4899","#f97316","#06b6d4","#84cc16","#ef4444"];
+  const palette = [
+    "#3b82f6",
+    "#8b5cf6",
+    "#10b981",
+    "#ec4899",
+    "#f97316",
+    "#06b6d4",
+    "#84cc16",
+    "#ef4444",
+  ];
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0x7fffffff;
   return palette[h % palette.length];
@@ -88,7 +145,10 @@ function parseEmailBody(raw: string): Segment[] {
 
   for (const line of lines) {
     const type: "text" | "quote" = /^>+/.test(line) ? "quote" : "text";
-    if (type !== currentType) { flush(); currentType = type; }
+    if (type !== currentType) {
+      flush();
+      currentType = type;
+    }
     buffer.push(line);
   }
   flush();
@@ -108,7 +168,9 @@ function QuoteBlock({ lines }: { lines: string[] }) {
           <span className="block w-2.5 h-px bg-current" />
           <span className="block w-1.5 h-px bg-current" />
         </span>
-        {open ? "Hide quoted text" : `${lines.length} line${lines.length !== 1 ? "s" : ""} of quoted text`}
+        {open
+          ? "Hide quoted text"
+          : `${lines.length} line${lines.length !== 1 ? "s" : ""} of quoted text`}
       </button>
       <AnimatePresence>
         {open && (
@@ -214,44 +276,49 @@ function EmailMessage({
   index: number;
 }) {
   const [expanded, setExpanded] = useState(isLatest);
+  const [showAllRecipients, setShowAllRecipients] = useState(false);
   const displayName = email.from_name || email.from_email;
   const avatarColor = getAvatarColor(displayName);
   const segments = parseEmailBody(email.body_text ?? email.snippet ?? "");
+
+  const ccList = (email as StoredEmail & { cc_emails?: string[] }).cc_emails ?? [];
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.05, duration: 0.2, ease: "easeOut" }}
-      className="border-b border-border/30 last:border-0"
+      transition={{ delay: index * 0.04, duration: 0.2, ease: "easeOut" }}
+      className="border-b border-border/20 last:border-0"
     >
       <button
         className={cn(
-          "w-full flex items-center justify-between px-5 py-3.5 transition-colors text-left gap-3",
-          expanded ? "bg-transparent" : "hover:bg-sidebar-accent/25"
+          "w-full flex items-center justify-between px-5 py-4 transition-colors text-left gap-3",
+          expanded ? "bg-transparent" : "hover:bg-sidebar-accent/10"
         )}
         onClick={() => setExpanded((v) => !v)}
       >
         <div className="flex items-center gap-3 min-w-0">
           <div
-            className="w-8 h-8 flex items-center justify-center text-[12px] font-bold text-white shrink-0"
+            className="w-9 h-9 flex items-center justify-center text-[13px] font-bold text-white shrink-0"
             style={{ backgroundColor: avatarColor }}
           >
             {displayName.charAt(0).toUpperCase()}
           </div>
           <div className="min-w-0">
-            <p className="text-xs font-semibold text-foreground">{email.from_name || email.from_email}</p>
+            <p className="text-sm font-semibold text-foreground">{email.from_name || email.from_email}</p>
             {expanded && email.from_email ? (
-              <p className="text-[11px] text-muted-foreground/70 mt-0.5 select-all">{email.from_email}</p>
+              <p className="text-[11px] text-muted-foreground/60 mt-0.5 select-all font-mono">
+                {email.from_email}
+              </p>
             ) : (
-              <p className="text-[11px] text-muted-foreground/60 truncate max-w-[260px] mt-0.5">
+              <p className="text-[11px] text-muted-foreground/50 truncate max-w-[320px] mt-0.5">
                 {email.snippet}
               </p>
             )}
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <span className="text-[10px] text-muted-foreground/50">{formatTime(email.received_at)}</span>
+          <span className="text-[11px] text-muted-foreground/50">{formatTime(email.received_at)}</span>
           {expanded ? (
             <ChevronUp className="w-3.5 h-3.5 text-muted-foreground/30" />
           ) : (
@@ -269,50 +336,75 @@ function EmailMessage({
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <div className="pb-4">
-              <div className="mb-3 pl-16 pr-5 space-y-0.5">
-                <p className="text-[10px] text-muted-foreground/40">
-                  To: {email.to_emails.join(", ")}
-                </p>
-              </div>
-              <div className="bg-white overflow-hidden">
-                {email.body_html ? (
-                  <HtmlEmailFrame html={email.body_html} />
-                ) : (
-                  <div className="pl-16 pr-5 py-3 space-y-3">
-                    {segments.length === 0 ? (
-                      <p className="text-sm text-muted-foreground/40 italic">No content</p>
-                    ) : (
-                      segments.map((seg, i) =>
-                        seg.type === "text" ? (
-                          <p key={i} className="text-[13px] text-gray-800 leading-relaxed whitespace-pre-wrap">
-                            {seg.content}
-                          </p>
-                        ) : (
-                          <QuoteBlock key={i} lines={seg.lines} />
-                        )
-                      )
-                    )}
-                  </div>
-                )}
-              </div>
-              {email.attachments?.length > 0 && (
-                <div className="mt-3 pl-16 pr-5 flex flex-wrap gap-2">
-                  {email.attachments.map((att, i) => (
-                    <a
-                      key={i}
-                      href={`/api/email/attachment?messageId=${email.gmail_message_id}&attachmentId=${att.attachmentId}&filename=${encodeURIComponent(att.filename)}&mimeType=${encodeURIComponent(att.mimeType)}`}
-                      download={att.filename}
-                      className="flex items-center gap-1.5 text-[11px] text-foreground/70 border border-border/50 bg-sidebar-accent/30 px-2.5 py-1.5 hover:border-primary/40 hover:text-foreground hover:bg-sidebar-accent/60 transition-colors"
+            {/* Recipient metadata */}
+            <div className="pl-17 pr-5 pb-3 pl-[68px] space-y-0.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] text-muted-foreground/40 uppercase tracking-wide font-medium w-5 shrink-0">To</span>
+                <span className="text-[11px] text-muted-foreground/60">
+                  {(email.to_emails ?? []).slice(0, showAllRecipients ? undefined : 2).join(", ")}
+                  {!showAllRecipients && (email.to_emails ?? []).length > 2 && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setShowAllRecipients(true); }}
+                      className="ml-1 text-muted-foreground/40 hover:text-foreground transition-colors"
                     >
-                      <Paperclip className="w-3 h-3 shrink-0" />
-                      <span className="truncate max-w-[160px]">{att.filename}</span>
-                      <span className="text-muted-foreground/40 shrink-0">{formatFileSize(att.size)}</span>
-                    </a>
-                  ))}
+                      +{(email.to_emails ?? []).length - 2} more
+                    </button>
+                  )}
+                </span>
+              </div>
+              {ccList.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] text-muted-foreground/40 uppercase tracking-wide font-medium w-5 shrink-0">CC</span>
+                  <span className="text-[11px] text-muted-foreground/50">{ccList.join(", ")}</span>
                 </div>
               )}
             </div>
+
+            {/* Email body */}
+            <div className="bg-white overflow-hidden">
+              {email.body_html ? (
+                <HtmlEmailFrame html={email.body_html} />
+              ) : (
+                <div className="pl-[68px] pr-5 py-3 space-y-3">
+                  {segments.length === 0 ? (
+                    <p className="text-sm text-muted-foreground/40 italic">No content</p>
+                  ) : (
+                    segments.map((seg, i) =>
+                      seg.type === "text" ? (
+                        <p
+                          key={i}
+                          className="text-[13px] text-gray-800 leading-relaxed whitespace-pre-wrap"
+                        >
+                          {seg.content}
+                        </p>
+                      ) : (
+                        <QuoteBlock key={i} lines={seg.lines} />
+                      )
+                    )
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Attachments */}
+            {email.attachments?.length > 0 && (
+              <div className="mt-3 pl-[68px] pr-5 pb-4 flex flex-wrap gap-2">
+                {email.attachments.map((att, i) => (
+                  <a
+                    key={i}
+                    href={`/api/email/attachment?messageId=${email.gmail_message_id}&attachmentId=${att.attachmentId}&filename=${encodeURIComponent(att.filename)}&mimeType=${encodeURIComponent(att.mimeType)}`}
+                    download={att.filename}
+                    className="flex items-center gap-1.5 text-[11px] text-foreground/70 border border-border/50 bg-sidebar-accent/30 px-2.5 py-1.5 hover:border-primary/40 hover:text-foreground hover:bg-sidebar-accent/60 transition-colors"
+                  >
+                    <Paperclip className="w-3 h-3 shrink-0" />
+                    <span className="truncate max-w-[160px]">{att.filename}</span>
+                    <span className="text-muted-foreground/40 shrink-0">
+                      {formatFileSize(att.size)}
+                    </span>
+                  </a>
+                ))}
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -320,7 +412,6 @@ function EmailMessage({
   );
 }
 
-// ── Inline calendar event form ─────────────────────────────────────────────────
 function CalendarEventForm({
   date,
   defaultTitle,
@@ -360,7 +451,9 @@ function CalendarEventForm({
         className="w-full text-xs bg-background border border-border px-2 py-1.5 text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary transition-colors"
         autoFocus
       />
-      <p className="text-[10px] text-muted-foreground/50">{date.raw} · all day · {date.iso}</p>
+      <p className="text-[10px] text-muted-foreground/50">
+        {date.raw} · all day · {date.iso}
+      </p>
       <div className="flex gap-1.5">
         <button
           type="submit"
@@ -381,25 +474,43 @@ function CalendarEventForm({
   );
 }
 
-// ── Main thread panel ──────────────────────────────────────────────────────────
 export function EmailThreadPanel({
   messages,
   dateConflicts,
   mentionedDates,
   phaseSignal,
   calendarConnected,
-  currentSubject,
+  projects,
+  phases,
+  tasks,
+  hasToneProfile,
+  userEmail,
   onDismissConflicts,
   onDismissPhaseSignal,
   onPhaseAction,
   onCreateCalendarEvent,
-  onReply,
+  onPhaseSignal,
 }: EmailThreadPanelProps) {
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [replyMode, setReplyMode] = useState<ReplyMode>("reply");
   const [activeCalendarDate, setActiveCalendarDate] = useState<string | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Scroll to bottom when thread loads
+  useEffect(() => {
+    if (messages.length > 0) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages]);
+
+  // Close compose when thread changes
+  useEffect(() => {
+    setComposeOpen(false);
+  }, [messages[0]?.gmail_thread_id]);
 
   if (!messages.length) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="flex h-full items-center justify-center bg-white">
         <motion.p
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -415,19 +526,28 @@ export function EmailThreadPanel({
   const latestIdx = messages.length - 1;
   const calendarDates = mentionedDates.filter((d) => d.iso);
 
+  // Only flag phase-level scheduling conflicts (not individual task dates)
+  const realConflicts = dateConflicts.filter((c) => c.conflictType === "phase");
+
+  function openReply(mode: ReplyMode) {
+    setReplyMode(mode);
+    setComposeOpen(true);
+  }
+
   return (
     <div className="flex flex-col h-full bg-white">
-      {/* Subject header */}
-      <div className="px-5 py-4 border-b border-border shrink-0 bg-white">
-        <h2 className="text-sm font-semibold text-foreground leading-snug">{subject}</h2>
+      {/* ── Subject header ── */}
+      <div className="px-5 py-4 border-b border-border/30 shrink-0 bg-white">
+        <h2 className="text-base font-semibold text-foreground leading-snug">{subject}</h2>
         <p className="text-[11px] text-muted-foreground/50 mt-0.5">
           {messages.length} message{messages.length !== 1 ? "s" : ""}
         </p>
       </div>
 
-      {/* Banners */}
+      {/* ── Banners ── */}
       <AnimatePresence>
-        {dateConflicts.length > 0 && (
+        {/* Phase scheduling conflict — only shown for actual phase overlaps */}
+        {realConflicts.length > 0 && (
           <motion.div
             key="conflict"
             initial={{ opacity: 0, height: 0 }}
@@ -444,13 +564,13 @@ export function EmailThreadPanel({
                   </div>
                   <div>
                     <p className="text-xs font-semibold text-foreground">
-                      {dateConflicts.length} date conflict{dateConflicts.length > 1 ? "s" : ""} detected
+                      Scheduling conflict
                     </p>
                     <ul className="mt-1.5 space-y-1">
-                      {dateConflicts.map((c, i) => (
+                      {realConflicts.map((c, i) => (
                         <li key={i} className="text-[11px] text-muted-foreground leading-relaxed">
                           <span className="text-orange-400 font-medium">{c.mentionedDate}</span>
-                          {" conflicts with "}
+                          {" overlaps with "}
                           <span className="text-foreground/80 font-medium">{c.conflictName}</span>
                           <span className="text-muted-foreground/50"> — {c.conflictDetails}</span>
                         </li>
@@ -458,7 +578,10 @@ export function EmailThreadPanel({
                     </ul>
                   </div>
                 </div>
-                <button onClick={onDismissConflicts} className="text-muted-foreground/30 hover:text-foreground transition-colors mt-0.5 shrink-0">
+                <button
+                  onClick={onDismissConflicts}
+                  className="text-muted-foreground/30 hover:text-foreground transition-colors mt-0.5 shrink-0"
+                >
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -495,7 +618,10 @@ export function EmailThreadPanel({
                     </button>
                   </div>
                 </div>
-                <button onClick={onDismissPhaseSignal} className="text-muted-foreground/30 hover:text-foreground transition-colors mt-0.5 shrink-0">
+                <button
+                  onClick={onDismissPhaseSignal}
+                  className="text-muted-foreground/30 hover:text-foreground transition-colors mt-0.5 shrink-0"
+                >
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -513,7 +639,7 @@ export function EmailThreadPanel({
             transition={{ duration: 0.15 }}
             className="shrink-0 overflow-hidden"
           >
-            <div className="mx-4 mt-3 border border-border/60 bg-sidebar-accent/30 p-3">
+            <div className="mx-4 mt-3 border border-border/60 bg-sidebar-accent/20 p-3">
               <div className="flex items-center gap-2 mb-2">
                 <CalendarPlus className="w-3.5 h-3.5 text-muted-foreground/50" />
                 <p className="text-[11px] font-semibold text-muted-foreground/60 uppercase tracking-wider">
@@ -527,14 +653,16 @@ export function EmailThreadPanel({
                       <div className="min-w-0">
                         <span className="text-[11px] font-medium text-foreground/80">{d.raw}</span>
                         {d.context && (
-                          <p className="text-[10px] text-muted-foreground/50 truncate max-w-[200px] mt-0.5">
+                          <p className="text-[10px] text-muted-foreground/50 truncate max-w-[240px] mt-0.5">
                             &ldquo;{d.context.trim()}&rdquo;
                           </p>
                         )}
                       </div>
                       <button
                         onClick={() =>
-                          setActiveCalendarDate(activeCalendarDate === d.iso ? null : (d.iso ?? null))
+                          setActiveCalendarDate(
+                            activeCalendarDate === d.iso ? null : (d.iso ?? null)
+                          )
                         }
                         className={cn(
                           "flex items-center gap-1 text-[10px] font-medium px-2 py-1 border shrink-0 transition-colors",
@@ -551,7 +679,7 @@ export function EmailThreadPanel({
                       {activeCalendarDate === d.iso && (
                         <CalendarEventForm
                           date={d}
-                          defaultTitle={currentSubject}
+                          defaultTitle={subject}
                           onSubmit={(summary, isoDate) =>
                             onCreateCalendarEvent({ summary, date: isoDate })
                           }
@@ -567,25 +695,69 @@ export function EmailThreadPanel({
         )}
       </AnimatePresence>
 
-      {/* Messages scroll area */}
+      {/* ── Messages scroll area ── */}
       <div className="flex-1 overflow-y-auto bg-white">
-        <div className="py-1">
+        <div className="py-2">
           {messages.map((msg, i) => (
             <EmailMessage key={msg.id} email={msg} isLatest={i === latestIdx} index={i} />
           ))}
         </div>
+
+        {/* Reply action bar */}
+        {!composeOpen && (
+          <div className="px-5 py-4 flex items-center gap-2">
+            <button
+              onClick={() => openReply("reply")}
+              className="flex items-center gap-1.5 text-xs font-medium text-foreground border border-border/60 px-3 py-2 hover:bg-sidebar-accent/30 hover:border-border transition-colors"
+            >
+              <Reply className="w-3.5 h-3.5" />
+              Reply
+            </button>
+            <button
+              onClick={() => openReply("replyAll")}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground border border-border/40 px-3 py-2 hover:bg-sidebar-accent/20 hover:text-foreground hover:border-border/60 transition-colors"
+            >
+              <ReplyAll className="w-3.5 h-3.5" />
+              Reply All
+            </button>
+            <button
+              onClick={() => openReply("forward")}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground border border-border/40 px-3 py-2 hover:bg-sidebar-accent/20 hover:text-foreground hover:border-border/60 transition-colors"
+            >
+              <Forward className="w-3.5 h-3.5" />
+              Forward
+            </button>
+          </div>
+        )}
+
+        <div ref={messagesEndRef} />
       </div>
 
-      {/* Reply CTA */}
-      <div className="px-5 py-3 border-t border-border shrink-0">
-        <button
-          onClick={onReply}
-          className="w-full flex items-center justify-center gap-2 text-xs font-semibold text-primary border border-primary/30 py-2.5 hover:bg-primary/5 transition-all hover:border-primary/60"
-        >
-          Reply
-          <ArrowRight className="w-3.5 h-3.5" />
-        </button>
-      </div>
+      {/* ── Inline compose drawer ── */}
+      <AnimatePresence>
+        {composeOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="shrink-0 overflow-hidden border-t border-border/40"
+          >
+            <EmailComposePanel
+              threadMessages={messages}
+              replyMode={replyMode}
+              projects={projects}
+              phases={phases}
+              tasks={tasks}
+              hasToneProfile={hasToneProfile}
+              userEmail={userEmail}
+              onClose={() => setComposeOpen(false)}
+              onSent={() => setComposeOpen(false)}
+              onPhaseSignal={onPhaseSignal}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

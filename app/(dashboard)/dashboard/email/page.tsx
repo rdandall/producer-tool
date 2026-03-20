@@ -20,7 +20,7 @@ export default async function EmailPage({
 
   const supabase = await createClient();
 
-  const [emails, taskSuggestions, projects, hasToneProfile, filterRaw, calendarToken] =
+  const [emails, taskSuggestions, projects, hasToneProfile, filterRaw, calendarToken, userEmail] =
     await Promise.all([
       getAllEmails(),
       getPendingTaskSuggestions(),
@@ -28,6 +28,7 @@ export default async function EmailPage({
       getSetting("gmail_tone_profile").then((v) => !!v),
       getSetting("email_task_filter_addresses"),
       getSetting("google_refresh_token"),
+      getSetting("gmail_user_email"),
     ]);
 
   const initialFilterAddresses: string[] = filterRaw ? JSON.parse(filterRaw) : [];
@@ -69,6 +70,7 @@ export default async function EmailPage({
       hasToneProfile={hasToneProfile}
       initialFilterAddresses={initialFilterAddresses}
       calendarConnected={calendarConnected}
+      userEmail={userEmail ?? ""}
     />
   );
 }

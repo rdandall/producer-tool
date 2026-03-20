@@ -12,7 +12,7 @@ import {
 } from "@/app/actions";
 import { EmailListPanel } from "./email-list-panel";
 import { EmailThreadPanel } from "./email-thread-panel";
-import { EmailComposePanel } from "./email-compose-panel";
+import { NewEmailModal } from "./new-email-modal";
 
 interface Project {
   id: string;
@@ -67,6 +67,7 @@ interface EmailClientProps {
   hasToneProfile: boolean;
   initialFilterAddresses: string[];
   calendarConnected: boolean;
+  userEmail: string;
 }
 
 /** Client-side date extraction (regex-based, instant) */
@@ -84,7 +85,11 @@ function extractDatesFromText(
     const year = match[3] ? parseInt(match[3]) : now.getFullYear();
     const date = new Date(`${match[1]} ${match[2]}, ${year}`);
     if (!isNaN(date.getTime())) {
-      results.push({ raw: match[0], date, context: text.slice(Math.max(0, match.index - 40), match.index + 60) });
+      results.push({
+        raw: match[0],
+        date,
+        context: text.slice(Math.max(0, match.index - 40), match.index + 60),
+      });
     }
   }
 
@@ -92,32 +97,47 @@ function extractDatesFromText(
   while ((match = re2.exec(text)) !== null) {
     const date = new Date(match[0]);
     if (!isNaN(date.getTime())) {
-      results.push({ raw: match[0], date, context: text.slice(Math.max(0, match.index - 40), match.index + 60) });
+      results.push({
+        raw: match[0],
+        date,
+        context: text.slice(Math.max(0, match.index - 40), match.index + 60),
+      });
     }
   }
 
   const re3 = /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/g;
   while ((match = re3.exec(text)) !== null) {
-    const yr = match[3].length === 2 ? 2000 + parseInt(match[3]) : parseInt(match[3]);
+    const yr =
+      match[3].length === 2 ? 2000 + parseInt(match[3]) : parseInt(match[3]);
     const date = new Date(yr, parseInt(match[1]) - 1, parseInt(match[2]));
     if (!isNaN(date.getTime())) {
-      results.push({ raw: match[0], date, context: text.slice(Math.max(0, match.index - 40), match.index + 60) });
+      results.push({
+        raw: match[0],
+        date,
+        context: text.slice(Math.max(0, match.index - 40), match.index + 60),
+      });
     }
   }
 
   return results;
 }
 
+/**
+ * Only flag conflicts when a date in the email overlaps with an ACTIVE phase
+ * (status: "active" or "in_progress"). Ignores task due dates — a task due on
+ * a date doesn't mean the date is unavailable.
+ */
 function checkConflicts(
   extractedDates: Array<{ raw: string; date: Date; context: string }>,
-  phases: Phase[],
-  tasks: Task[]
+  phases: Phase[]
 ): DateConflict[] {
   const conflicts: DateConflict[] = [];
+  const activeStatuses = new Set(["active", "in_progress", "in-progress"]);
 
   for (const { raw, date, context } of extractedDates) {
     for (const phase of phases) {
       if (!phase.start_date) continue;
+      if (!activeStatuses.has(phase.status)) continue;
       const start = new Date(phase.start_date);
       const end = phase.end_date ? new Date(phase.end_date) : start;
       if (date >= start && date <= end) {
@@ -127,21 +147,6 @@ function checkConflicts(
           conflictType: "phase",
           conflictName: phase.name,
           conflictDetails: `${phase.start_date} – ${phase.end_date ?? phase.start_date} (${phase.status})`,
-        });
-      }
-    }
-
-    for (const task of tasks) {
-      if (!task.due_date) continue;
-      const taskDate = new Date(task.due_date);
-      const diff = Math.abs(date.getTime() - taskDate.getTime());
-      if (diff <= 86_400_000) {
-        conflicts.push({
-          mentionedDate: raw,
-          mentionedContext: context,
-          conflictType: "task",
-          conflictName: task.title,
-          conflictDetails: `Task due on ${task.due_date}`,
         });
       }
     }
@@ -164,12 +169,13 @@ export function EmailClient({
   hasToneProfile,
   initialFilterAddresses,
   calendarConnected,
+  userEmail,
 }: EmailClientProps) {
   const [emails, setEmails] = useState(initialEmails);
   const [taskSuggestions, setTaskSuggestions] = useState(initialTaskSuggestions);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
-  const [composeOpen, setComposeOpen] = useState(false);
-  const [mobileView, setMobileView] = useState<"list" | "thread" | "compose">("list");
+  const [mobileView, setMobileView] = useState<"list" | "thread">("list");
+  const [newEmailOpen, setNewEmailOpen] = useState(false);
   const assistantActionApplied = useRef(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [search, setSearch] = useState("");
@@ -199,13 +205,12 @@ export function EmailClient({
     try {
       const res = await fetch("/api/email/sync", { method: "POST" });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({})) as { error?: string };
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(err.error ?? "Sync failed");
       }
-      const data = await res.json() as {
+      const data = (await res.json()) as {
         synced: number;
         emails?: StoredEmail[];
-        taskSuggestionsAdded?: number;
         taskSuggestions?: EmailTaskSuggestion[];
       };
 
@@ -219,19 +224,16 @@ export function EmailClient({
           toast.info("Inbox is up to date");
         }
       } else if (data.synced > 0) {
-        toast.success(`${data.synced} new email${data.synced !== 1 ? "s" : ""}`, { id: "bg-sync" });
-      }
-
-      if ((data.taskSuggestionsAdded ?? 0) > 0) {
-        toast.info(
-          `${data.taskSuggestionsAdded} task suggestion${(data.taskSuggestionsAdded ?? 0) !== 1 ? "s" : ""} found in new emails`,
-          { id: "task-suggestions" }
-        );
+        toast.success(`${data.synced} new email${data.synced !== 1 ? "s" : ""}`, {
+          id: "bg-sync",
+        });
       }
     } catch (err) {
       if (!silent) {
         const msg = err instanceof Error ? err.message : "Sync failed";
-        toast.error(msg.includes("Not connected") ? "Gmail not connected" : "Sync failed — try again");
+        toast.error(
+          msg.includes("Not connected") ? "Gmail not connected" : "Sync failed — try again"
+        );
       }
     } finally {
       setIsSyncing(false);
@@ -251,14 +253,13 @@ export function EmailClient({
   useEffect(() => {
     const interval = setInterval(() => {
       if (!document.hidden) handleSync(true);
-    }, 30_000);
+    }, 60_000); // every 60s instead of 30s
     return () => clearInterval(interval);
   }, [handleSync]);
 
   const handleSelectThread = useCallback(
-    (threadId: string) => {
+    (threadId: string, _latestMessageId?: string) => {
       setSelectedThreadId(threadId);
-      setComposeOpen(false);
       setMobileView("thread");
       setConflictsDismissed(false);
       setPhaseSignalDismissed(false);
@@ -285,11 +286,12 @@ export function EmailClient({
             context: d.context,
           }))
         );
-        const conflicts = checkConflicts(extracted, phases, tasks);
+        // Only check phase conflicts (not tasks)
+        const conflicts = checkConflicts(extracted, phases);
         if (conflicts.length > 0) setDateConflicts(conflicts);
       }
 
-      // On-demand extraction (uses filterAddresses from Settings as backup)
+      // On-demand task extraction for emails from allowlisted senders
       const latestEmail = threadEmails[threadEmails.length - 1];
       if (
         latestEmail &&
@@ -314,15 +316,18 @@ export function EmailClient({
           .then((r) => r.json())
           .then((d: { inserted?: number }) => {
             if ((d.inserted ?? 0) > 0) {
-              toast.info(`${d.inserted} task${(d.inserted ?? 0) > 1 ? "s" : ""} found in this email`);
+              toast.info(
+                `${d.inserted} task${(d.inserted ?? 0) > 1 ? "s" : ""} found in this email`
+              );
             }
           })
           .catch(() => null);
       }
     },
-    [emails, phases, tasks, taskSuggestions, projects, filterAddresses]
+    [emails, phases, taskSuggestions, projects, filterAddresses]
   );
 
+  // Handle assistant action from sessionStorage
   useEffect(() => {
     if (assistantActionApplied.current || emails.length === 0) return;
 
@@ -344,8 +349,6 @@ export function EmailClient({
         const threadExists = emails.some((e) => e.gmail_thread_id === assistantAction.thread_id);
         if (threadExists) {
           handleSelectThread(assistantAction.thread_id);
-          setComposeOpen(true);
-          setMobileView("compose");
         } else {
           toast.info("Thread not found — it may need to sync first");
         }
@@ -353,21 +356,19 @@ export function EmailClient({
         const match = emails.find(
           (e) =>
             !e.is_sent &&
-            e.from_name?.toLowerCase().includes((assistantAction.sender_name ?? "").toLowerCase())
+            e.from_name
+              ?.toLowerCase()
+              .includes((assistantAction.sender_name ?? "").toLowerCase())
         );
         if (match?.gmail_thread_id) {
           handleSelectThread(match.gmail_thread_id);
-          setComposeOpen(true);
-          setMobileView("compose");
         } else {
-          toast.info(`Find the email from ${assistantAction.sender_name} in your inbox to reply`);
+          toast.info(
+            `Find the email from ${assistantAction.sender_name} in your inbox to reply`
+          );
         }
       } else if (assistantAction.type === "compose") {
-        toast.info(
-          assistantAction.to
-            ? `Compose a new email to ${assistantAction.to}`
-            : "Assistant ready — select a thread to reply to"
-        );
+        setNewEmailOpen(true);
       }
     } catch {
       // malformed storage — ignore
@@ -398,20 +399,23 @@ export function EmailClient({
     }
   }, []);
 
-  const handlePhaseAction = useCallback(async (phaseId: string | null, _action: string) => {
-    if (!phaseId) {
-      toast.info("Open the project to update the phase manually.");
-      setPhaseSignalDismissed(true);
-      return;
-    }
-    try {
-      await updatePhaseStatusAction(phaseId, "complete");
-      toast.success("Phase marked complete");
-      setPhaseSignalDismissed(true);
-    } catch {
-      toast.error("Failed to update phase");
-    }
-  }, []);
+  const handlePhaseAction = useCallback(
+    async (phaseId: string | null, _action: string) => {
+      if (!phaseId) {
+        toast.info("Open the project to update the phase manually.");
+        setPhaseSignalDismissed(true);
+        return;
+      }
+      try {
+        await updatePhaseStatusAction(phaseId, "complete");
+        toast.success("Phase marked complete");
+        setPhaseSignalDismissed(true);
+      } catch {
+        toast.error("Failed to update phase");
+      }
+    },
+    []
+  );
 
   const handleCreateCalendarEvent = useCallback(
     async (params: { summary: string; date: string }) => {
@@ -426,11 +430,18 @@ export function EmailClient({
             endDate: params.date,
           }),
         });
-        const data = await res.json() as { success?: boolean; htmlLink?: string; error?: string };
+        const data = (await res.json()) as {
+          success?: boolean;
+          htmlLink?: string;
+          error?: string;
+        };
         if (!res.ok || data.error) throw new Error(data.error ?? "Failed to create event");
         toast.success("Event added to Google Calendar", {
           action: data.htmlLink
-            ? { label: "View", onClick: () => window.open(data.htmlLink, "_blank") }
+            ? {
+                label: "View",
+                onClick: () => window.open(data.htmlLink, "_blank"),
+              }
             : undefined,
         });
       } catch (err) {
@@ -441,106 +452,95 @@ export function EmailClient({
   );
 
   const visibleConflicts = conflictsDismissed ? [] : dateConflicts;
-  const visiblePhaseSignal = phaseSignalDismissed || !phaseSignal?.detected ? null : phaseSignal;
+  const visiblePhaseSignal =
+    phaseSignalDismissed || !phaseSignal?.detected ? null : phaseSignal;
 
   return (
-    <div className="flex h-full overflow-hidden">
-      <div className={cn(
-        "shrink-0 overflow-hidden flex flex-col",
-        "w-full md:w-72",
-        mobileView !== "list" ? "hidden md:flex" : "flex"
-      )}>
-        <EmailListPanel
-          emails={emails}
-          selectedThreadId={selectedThreadId}
-          taskSuggestions={taskSuggestions}
-          projects={projects}
-          isSyncing={isSyncing}
-          search={search}
-          onSearchChange={setSearch}
-          onSelectThread={(threadId) => handleSelectThread(threadId)}
-          onSync={handleSync}
-          onApproveTask={handleApproveTask}
-          onDismissTask={handleDismissTask}
-        />
-      </div>
-
-      <div className={cn(
-        "flex-1 min-w-0 overflow-hidden flex-col",
-        mobileView === "thread" ? "flex" : "hidden md:flex"
-      )}>
-        <div className="md:hidden flex items-center gap-2 px-4 h-11 border-b border-border shrink-0 bg-background/80 backdrop-blur-sm">
-          <button
-            onClick={() => { setSelectedThreadId(null); setMobileView("list"); }}
-            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ChevronLeft className="w-4 h-4" />
-            Inbox
-          </button>
+    <>
+      <div className="flex h-full overflow-hidden">
+        {/* ── Email list ── */}
+        <div
+          className={cn(
+            "shrink-0 overflow-hidden flex flex-col",
+            "w-full md:w-72",
+            mobileView !== "list" ? "hidden md:flex" : "flex"
+          )}
+        >
+          <EmailListPanel
+            emails={emails}
+            selectedThreadId={selectedThreadId}
+            taskSuggestions={taskSuggestions}
+            projects={projects}
+            isSyncing={isSyncing}
+            search={search}
+            onSearchChange={setSearch}
+            onSelectThread={handleSelectThread}
+            onSync={handleSync}
+            onApproveTask={handleApproveTask}
+            onDismissTask={handleDismissTask}
+            onCompose={() => setNewEmailOpen(true)}
+          />
         </div>
-        <EmailThreadPanel
-          messages={threadMessages}
-          dateConflicts={visibleConflicts}
-          mentionedDates={mentionedDates}
-          phaseSignal={visiblePhaseSignal}
-          calendarConnected={calendarConnected}
-          currentSubject={threadMessages[0]?.subject ?? ""}
-          onDismissConflicts={() => setConflictsDismissed(true)}
-          onDismissPhaseSignal={() => setPhaseSignalDismissed(true)}
-          onPhaseAction={handlePhaseAction}
-          onCreateCalendarEvent={handleCreateCalendarEvent}
-          onReply={() => { setComposeOpen(true); setMobileView("compose"); }}
-        />
-      </div>
 
-      {composeOpen && threadMessages.length > 0 && (
-        <div className={cn(
-          "shrink-0 overflow-hidden flex-col",
-          "w-full md:w-[460px]",
-          mobileView === "compose" ? "flex" : "hidden md:flex"
-        )}>
+        {/* ── Thread view (full width, compose inline) ── */}
+        <div
+          className={cn(
+            "flex-1 min-w-0 overflow-hidden flex-col",
+            mobileView === "thread" ? "flex" : "hidden md:flex"
+          )}
+        >
+          {/* Mobile back button */}
           <div className="md:hidden flex items-center gap-2 px-4 h-11 border-b border-border shrink-0 bg-background/80 backdrop-blur-sm">
             <button
-              onClick={() => setMobileView("thread")}
+              onClick={() => {
+                setSelectedThreadId(null);
+                setMobileView("list");
+              }}
               className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
             >
               <ChevronLeft className="w-4 h-4" />
-              Thread
+              Inbox
             </button>
           </div>
-          <EmailComposePanel
-            threadMessages={threadMessages}
+
+          <EmailThreadPanel
+            messages={threadMessages}
+            dateConflicts={visibleConflicts}
+            mentionedDates={mentionedDates}
+            phaseSignal={visiblePhaseSignal}
+            calendarConnected={calendarConnected}
             projects={projects}
             phases={phases}
             tasks={tasks}
             hasToneProfile={hasToneProfile}
-            onClose={() => { setComposeOpen(false); setMobileView("thread"); }}
+            userEmail={userEmail}
+            onDismissConflicts={() => setConflictsDismissed(true)}
+            onDismissPhaseSignal={() => setPhaseSignalDismissed(true)}
+            onPhaseAction={handlePhaseAction}
+            onCreateCalendarEvent={handleCreateCalendarEvent}
             onPhaseSignal={(signal) => {
               setPhaseSignal(signal);
               setPhaseSignalDismissed(false);
             }}
-            onMentionedDates={(dates) => {
-              const mapped = dates
-                .filter((d) => d.iso)
-                .map((d) => ({ raw: d.raw, date: new Date(d.iso!), context: d.context }));
-              if (mapped.length) {
-                setMentionedDates((prev) => {
-                  const existing = new Set(prev.map((d) => d.raw));
-                  const newDates = dates
-                    .filter((d) => d.iso && !existing.has(d.raw))
-                    .map((d) => ({ raw: d.raw, iso: d.iso, context: d.context }));
-                  return [...prev, ...newDates];
-                });
-                const newConflicts = checkConflicts(mapped, phases, tasks);
-                if (newConflicts.length) {
-                  setDateConflicts(newConflicts);
-                  setConflictsDismissed(false);
-                }
-              }
-            }}
           />
         </div>
+      </div>
+
+      {/* ── New email modal ── */}
+      {newEmailOpen && (
+        <NewEmailModal
+          projects={projects}
+          phases={phases}
+          tasks={tasks}
+          hasToneProfile={hasToneProfile}
+          userEmail={userEmail}
+          onClose={() => setNewEmailOpen(false)}
+          onSent={() => {
+            setNewEmailOpen(false);
+            handleSync(true);
+          }}
+        />
       )}
-    </div>
+    </>
   );
 }

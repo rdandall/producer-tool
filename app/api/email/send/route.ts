@@ -11,8 +11,8 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const { to, cc, subject, emailBody, threadId, inReplyTo, references, isHtml, attachments } = body;
 
-  if (!to || !emailBody || !threadId) {
-    return NextResponse.json({ error: "Missing required fields: to, emailBody, threadId" }, { status: 400 });
+  if (!to || !emailBody) {
+    return NextResponse.json({ error: "Missing required fields: to, emailBody" }, { status: 400 });
   }
 
   try {

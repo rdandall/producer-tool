@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Search, RefreshCw, CheckCircle2, X, ListChecks, ChevronDown } from "lucide-react";
+import { Search, RefreshCw, CheckCircle2, X, ListChecks, ChevronDown, PenSquare } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import type { StoredEmail, EmailTaskSuggestion } from "@/lib/db/emails";
@@ -35,6 +35,7 @@ interface EmailListPanelProps {
   onSync: () => void;
   onApproveTask: (suggestion: EmailTaskSuggestion) => void;
   onDismissTask: (id: string) => void;
+  onCompose: () => void;
 }
 
 function buildThreads(emails: StoredEmail[]): EmailThread[] {
@@ -98,6 +99,7 @@ export function EmailListPanel({
   onSync,
   onApproveTask,
   onDismissTask,
+  onCompose,
 }: EmailListPanelProps) {
   const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
 
@@ -122,7 +124,7 @@ export function EmailListPanel({
           <span className="text-[11px] font-semibold text-foreground uppercase tracking-widest">
             Inbox
           </span>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             {/* Task badge */}
             {pendingCount > 0 && (
               <button
@@ -135,7 +137,7 @@ export function EmailListPanel({
                 )}
               >
                 <ListChecks className="w-3 h-3" />
-                {pendingCount} task{pendingCount !== 1 ? "s" : ""}
+                {pendingCount}
                 <ChevronDown className={cn("w-2.5 h-2.5 transition-transform", taskDrawerOpen && "rotate-180")} />
               </button>
             )}
@@ -143,11 +145,18 @@ export function EmailListPanel({
             <button
               onClick={onSync}
               disabled={isSyncing}
-              className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
               title="Sync from Gmail"
             >
-              <RefreshCw className={cn("w-3 h-3", isSyncing && "animate-spin")} />
-              {isSyncing ? "Syncing…" : "Sync"}
+              <RefreshCw className={cn("w-3.5 h-3.5", isSyncing && "animate-spin")} />
+            </button>
+            {/* Compose button */}
+            <button
+              onClick={onCompose}
+              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+              title="Compose new email"
+            >
+              <PenSquare className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>

@@ -318,7 +318,7 @@ export async function sendGmailReply(
     cc?: string[];
     subject: string;
     body: string;
-    threadId: string;
+    threadId?: string;
     inReplyTo?: string;
     references?: string;
     fromEmail: string;
@@ -327,7 +327,11 @@ export async function sendGmailReply(
   }
 ): Promise<void> {
   const { to, cc, subject, body, threadId, inReplyTo, references, fromEmail, isHtml, attachments } = options;
-  const subjectLine = subject.startsWith("Re:") ? subject : `Re: ${subject}`;
+  // For new emails (no threadId), don't force the "Re:" prefix
+  const subjectLine =
+    threadId && !subject.startsWith("Re:") && !subject.startsWith("Fwd:")
+      ? `Re: ${subject}`
+      : subject;
   const contentType = isHtml ? "text/html" : "text/plain";
 
   let rawEmail: string;
@@ -381,7 +385,7 @@ export async function sendGmailReply(
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ raw: encodedEmail, threadId }),
+    body: JSON.stringify(threadId ? { raw: encodedEmail, threadId } : { raw: encodedEmail }),
   });
 
   if (!res.ok) {

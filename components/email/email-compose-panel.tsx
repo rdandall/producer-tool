@@ -1,18 +1,31 @@
 "use client";
 
 import { useRef, useState, useCallback, useEffect } from "react";
-import { Send, Zap, X, Settings, Loader2, Bold, Italic, Underline, Link, List, Edit3, Paperclip, ChevronDown, Mic, MicOff, Trash2 } from "lucide-react";
+import {
+  Send,
+  Zap,
+  X,
+  Loader2,
+  Bold,
+  Italic,
+  Link,
+  List,
+  Paperclip,
+  ChevronDown,
+  Mic,
+  MicOff,
+  RefreshCw,
+  Users,
+  Clock,
+} from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { StoredEmail } from "@/lib/db/emails";
-import { ResponseVariants, type VariantType, type Variants } from "./response-variants";
-import { SmartInsertsSidebar } from "./smart-inserts-sidebar";
 import { ContactAutocomplete, type Contact } from "@/components/notes/contact-autocomplete";
 
-interface SmartInsert {
-  label: string;
-  text: string;
-}
+type ComposeMode = "write" | "ai";
+type ToneType = "punchy" | "balanced" | "detailed";
+type ReplyMode = "reply" | "replyAll" | "forward";
 
 interface PhaseSignalResult {
   detected: boolean;
@@ -46,56 +59,101 @@ interface Task {
 
 interface EmailComposePanelProps {
   threadMessages: StoredEmail[];
+  replyMode: ReplyMode;
   projects: Project[];
   phases: Phase[];
   tasks: Task[];
   hasToneProfile: boolean;
+  userEmail: string;
   onClose: () => void;
+  onSent: () => void;
   onPhaseSignal: (signal: PhaseSignalResult) => void;
-  onMentionedDates: (dates: Array<{ raw: string; iso: string | null; context: string }>) => void;
 }
 
-const EMPTY_VARIANTS: Variants = { punchy: "", balanced: "", detailed: "" };
+const TONE_LABELS: Record<ToneType, string> = {
+  punchy: "Punchy",
+  balanced: "Balanced",
+  detailed: "Detailed",
+};
 
-type ComposeMode = "ai" | "manual";
+function getReplyRecipients(
+  threadMessages: StoredEmail[],
+  replyMode: ReplyMode,
+  userEmail: string
+): string[] {
+  const latest = threadMessages[threadMessages.length - 1];
+  if (!latest) return [];
+
+  if (replyMode === "forward") return [];
+
+  if (replyMode === "reply") {
+    return latest.from_email ? [latest.from_email] : [];
+  }
+
+  // reply all: sender + all To: recipients except self
+  const all = new Set<string>();
+  if (latest.from_email) all.add(latest.from_email);
+  for (const to of latest.to_emails ?? []) {
+    if (to.toLowerCase() !== userEmail.toLowerCase()) all.add(to);
+  }
+  return Array.from(all);
+}
 
 export function EmailComposePanel({
   threadMessages,
+  replyMode,
   projects,
   phases,
   tasks,
   hasToneProfile,
+  userEmail,
   onClose,
+  onSent,
   onPhaseSignal,
-  onMentionedDates,
 }: EmailComposePanelProps) {
-  const [composeMode, setComposeMode] = useState<ComposeMode>("ai");
-  const [variants, setVariants] = useState<Variants>(EMPTY_VARIANTS);
-  const [smartInserts, setSmartInserts] = useState<SmartInsert[]>([]);
-  const [activeVariant, setActiveVariant] = useState<VariantType>("balanced");
-  const [generating, setGenerating] = useState(false);
-  const [regenLoading, setRegenLoading] = useState<VariantType | null>(null);
+  const [mode, setMode] = useState<ComposeMode>("write");
+  const [text, setText] = useState("");
+  const [aiNotes, setAiNotes] = useState("");
+  const [aiGenerated, setAiGenerated] = useState(false);
+  const [tone, setTone] = useState<ToneType>("balanced");
+  const [showTonePicker, setShowTonePicker] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [showStyleNote, setShowStyleNote] = useState(false);
-  const [styleNote, setStyleNote] = useState("");
+  const [isListening, setIsListening] = useState(false);
   const [ccRecipients, setCcRecipients] = useState<Contact[]>([]);
   const [showCc, setShowCc] = useState(false);
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const [scheduledAt, setScheduledAt] = useState<string>("");
+  const [showSchedule, setShowSchedule] = useState(false);
 
-  // Dictation state
-  const [dictationNotes, setDictationNotes] = useState("");
-  const [isListening, setIsListening] = useState(false);
-  const [showDictation, setShowDictation] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Clean up speech recognition on unmount
+  const latestMsg = threadMessages[threadMessages.length - 1];
+  const replyRecipients = getReplyRecipients(threadMessages, replyMode, userEmail);
+
+  const subjectPrefix = replyMode === "forward" ? "Fwd: " : "Re: ";
+  const subject = latestMsg?.subject
+    ? latestMsg.subject.startsWith("Re:") || latestMsg.subject.startsWith("Fwd:")
+      ? latestMsg.subject
+      : `${subjectPrefix}${latestMsg.subject}`
+    : "(No subject)";
+
   useEffect(() => {
-    return () => {
-      recognitionRef.current?.stop();
-    };
+    return () => recognitionRef.current?.stop();
   }, []);
 
-  function toggleDictation() {
+  // Auto-resize textarea
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.max(el.scrollHeight, 140)}px`;
+  }, [text]);
+
+  const toggleDictation = useCallback(() => {
     if (isListening) {
       recognitionRef.current?.stop();
       setIsListening(false);
@@ -104,7 +162,6 @@ export function EmailComposePanel({
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
     if (!SR) {
       toast.error("Speech recognition not supported in this browser.");
       return;
@@ -117,70 +174,53 @@ export function EmailComposePanel({
     recognition.lang = "en-US";
     recognitionRef.current = recognition;
 
-    let finalTranscript = dictationNotes;
-
+    let finalBase = mode === "ai" ? aiNotes : text;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     recognition.onresult = (event: any) => {
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const t = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          finalTranscript += (finalTranscript ? " " : "") + t.trim();
+          finalBase += (finalBase ? " " : "") + t.trim();
         } else {
           interim = t;
         }
       }
-      setDictationNotes(finalTranscript + (interim ? " " + interim : ""));
+      const combined = finalBase + (interim ? " " + interim : "");
+      if (mode === "ai") setAiNotes(combined);
+      else setText(combined);
     };
 
     recognition.onend = () => {
-      setDictationNotes(finalTranscript);
+      if (mode === "ai") setAiNotes(finalBase);
+      else setText(finalBase);
       setIsListening(false);
     };
 
-    recognition.onerror = () => {
-      setIsListening(false);
-    };
-
+    recognition.onerror = () => setIsListening(false);
     recognition.start();
     setIsListening(true);
-    setShowDictation(true);
-  }
+  }, [isListening, mode, aiNotes, text]);
 
-  // Rich text editor ref (manual mode)
-  const editorRef = useRef<HTMLDivElement>(null);
-  // File input ref for attachments
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  // Attachments state
-  const [attachments, setAttachments] = useState<File[]>([]);
-
-  // insertRef is passed to ResponseVariants to expose the cursor-aware insert function
-  const insertRef = useRef<((text: string) => void) | null>(null);
-
-  // Find most likely project from thread context
   const inferredProject = useCallback(() => {
     const threadText = threadMessages.map((m) => m.body_text ?? m.snippet ?? "").join(" ");
-    const subject = threadMessages[0]?.subject ?? "";
+    const subjectText = threadMessages[0]?.subject ?? "";
     return projects.find(
       (p) =>
         threadText.toLowerCase().includes(p.title.toLowerCase()) ||
         (p.client && threadText.toLowerCase().includes(p.client.toLowerCase())) ||
-        subject.toLowerCase().includes(p.title.toLowerCase())
+        subjectText.toLowerCase().includes(p.title.toLowerCase())
     );
   }, [threadMessages, projects]);
 
   async function handleGenerate() {
     if (!threadMessages.length) return;
-    setGenerating(true);
+    setIsGenerating(true);
 
     try {
       const project = inferredProject();
-      const relevantPhases = project
-        ? phases.filter((ph) => ph.project_id === project.id)
-        : [];
-      const relevantTasks = project
-        ? tasks.filter((t) => t.project_id === project.id)
-        : [];
+      const relevantPhases = project ? phases.filter((ph) => ph.project_id === project.id) : [];
+      const relevantTasks = project ? tasks.filter((t) => t.project_id === project.id) : [];
 
       const res = await fetch("/api/email/generate-response", {
         method: "POST",
@@ -190,42 +230,42 @@ export function EmailComposePanel({
           projectContext: project ?? null,
           phases: relevantPhases,
           tasks: relevantTasks,
-          userNotes: dictationNotes.trim() || undefined,
+          userNotes: aiNotes.trim() || undefined,
+          variantType: tone,
         }),
       });
 
       if (!res.ok) throw new Error("Generation failed");
       const data = await res.json();
 
-      setVariants({
-        punchy: data.variants?.punchy ?? "",
-        balanced: data.variants?.balanced ?? "",
-        detailed: data.variants?.detailed ?? "",
-      });
-      setSmartInserts(data.smartInserts ?? []);
+      const generated =
+        data.variants?.[tone] ??
+        data.variants?.balanced ??
+        data.variants?.punchy ??
+        "";
+
+      if (generated) {
+        setText(generated);
+        setAiGenerated(true);
+      }
 
       if (data.phaseSignal?.detected) {
         onPhaseSignal(data.phaseSignal);
       }
-      if (data.mentionedDates?.length) {
-        onMentionedDates(data.mentionedDates);
-      }
     } catch {
-      toast.error("Failed to generate response. Try again.");
+      toast.error("Failed to generate. Try again.");
     } finally {
-      setGenerating(false);
+      setIsGenerating(false);
     }
   }
 
-  async function handleRegen(type: VariantType) {
-    if (!threadMessages.length) return;
-    setRegenLoading(type);
+  async function handleRegen() {
+    if (!text || !aiGenerated) return;
+    setIsGenerating(true);
 
     try {
       const project = inferredProject();
-      const relevantPhases = project
-        ? phases.filter((ph) => ph.project_id === project.id)
-        : [];
+      const relevantPhases = project ? phases.filter((ph) => ph.project_id === project.id) : [];
 
       const res = await fetch("/api/email/generate-response", {
         method: "POST",
@@ -235,38 +275,40 @@ export function EmailComposePanel({
           projectContext: project ?? null,
           phases: relevantPhases,
           tasks: [],
-          variantType: type,
-          userNotes: dictationNotes.trim() || undefined,
+          userNotes: aiNotes.trim() || undefined,
+          variantType: tone,
         }),
       });
 
       if (!res.ok) throw new Error("Regeneration failed");
       const data = await res.json();
-
-      const newContent = data.variants?.[type];
-      if (newContent) {
-        setVariants((prev) => ({ ...prev, [type]: newContent }));
-        toast.success(`${type} variant regenerated`);
+      const generated = data.variants?.[tone] ?? data.variants?.balanced ?? "";
+      if (generated) {
+        setText(generated);
+        toast.success("Regenerated");
       }
     } catch {
-      toast.error("Regeneration failed. Try again.");
+      toast.error("Regeneration failed.");
     } finally {
-      setRegenLoading(null);
+      setIsGenerating(false);
     }
   }
 
-  async function handleSend() {
-    const isManual = composeMode === "manual";
-    const emailBody = isManual
-      ? (editorRef.current?.innerHTML ?? "")
-      : variants[activeVariant];
+  function fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve((reader.result as string).split(",")[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
 
-    if (!emailBody.trim() || emailBody === "<br>") {
-      toast.error("Write or generate a reply first.");
+  async function handleSend() {
+    const body = text.trim();
+    if (!body) {
+      toast.error("Write something before sending.");
       return;
     }
-
-    const latestMsg = threadMessages[threadMessages.length - 1];
     if (!latestMsg) return;
 
     setIsSending(true);
@@ -283,20 +325,20 @@ export function EmailComposePanel({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to: latestMsg.from_email,
+          to: replyRecipients.join(", "),
           cc: ccRecipients.length > 0 ? ccRecipients.map((c) => c.email) : undefined,
-          subject: latestMsg.subject,
-          emailBody,
+          subject,
+          emailBody: body,
           threadId: latestMsg.gmail_thread_id,
-          isHtml: isManual,
+          isHtml: false,
           attachments: attachmentData.length > 0 ? attachmentData : undefined,
+          scheduledAt: scheduledAt || undefined,
         }),
       });
 
       if (!res.ok) throw new Error("Send failed");
-      toast.success("Reply sent");
-      setAttachments([]);
-      onClose();
+      toast.success(scheduledAt ? "Email scheduled" : "Sent");
+      onSent();
     } catch {
       toast.error("Failed to send. Check your Gmail connection.");
     } finally {
@@ -304,410 +346,396 @@ export function EmailComposePanel({
     }
   }
 
-  async function handleSaveStyleNote() {
-    await fetch("/api/email/style", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ styleNote }),
-    });
-    toast.success("Style note saved");
-    setShowStyleNote(false);
-  }
-
-  function fileToBase64(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
-        resolve(result.split(",")[1]);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  }
-
-  // Rich text formatting commands
   function execFormat(command: string, value?: string) {
     document.execCommand(command, false, value ?? undefined);
-    editorRef.current?.focus();
+    textareaRef.current?.focus();
   }
 
-  function handleLink() {
-    const url = prompt("Enter URL:");
-    if (url) execFormat("createLink", url);
-  }
-
-  const hasVariants = variants.punchy || variants.balanced || variants.detailed;
-  const latestMsg = threadMessages[threadMessages.length - 1];
+  const activeNotes = mode === "ai" ? aiNotes : text;
+  const canGenerate = mode === "ai" && aiNotes.trim().length > 0;
+  const canSend = text.trim().length > 0;
 
   return (
-    <div className="flex flex-col h-full border-l border-border">
-      {/* Header */}
-      <div className="border-b border-border shrink-0">
-        <div className="flex items-center justify-between px-4 py-3">
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-foreground truncate">
-              Re: {latestMsg?.subject ?? "(No subject)"}
-            </p>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <p className="text-[11px] text-muted-foreground">
-                → {latestMsg?.from_email}
-              </p>
-              <button
-                onClick={() => setShowCc((v) => !v)}
-                className="text-[10px] text-muted-foreground/50 hover:text-foreground transition-colors flex items-center gap-0.5 border border-border/40 px-1.5 py-0.5"
-              >
-                CC <ChevronDown className={cn("w-2.5 h-2.5 transition-transform", showCc && "rotate-180")} />
-              </button>
-            </div>
+    <div className="border-t border-border bg-background flex flex-col">
+      {/* ── Header ── */}
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/60 bg-sidebar-accent/10">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">
+              {replyMode === "reply" ? "Reply" : replyMode === "replyAll" ? "Reply All" : "Forward"}
+            </span>
+            <span className="text-[10px] text-muted-foreground/50 truncate max-w-[240px]">{subject}</span>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={() => setShowStyleNote((v) => !v)}
-              className="text-muted-foreground hover:text-foreground transition-colors"
-              title="Edit style note"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
-            <button
-              onClick={onClose}
-              className="text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-        {/* CC field */}
-        {showCc && (
-          <div className="px-4 pb-3">
-            <div className="flex items-start gap-2">
-              <span className="text-[10px] text-muted-foreground/50 uppercase tracking-wide font-semibold pt-2 shrink-0">CC</span>
-              <ContactAutocomplete value={ccRecipients} onChange={setCcRecipients} />
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Mode toggle */}
-      <div className="flex border-b border-border shrink-0">
-        <button
-          onClick={() => setComposeMode("ai")}
-          className={cn(
-            "flex items-center gap-1.5 px-4 py-2 text-xs border-b-2 -mb-px transition-colors",
-            composeMode === "ai"
-              ? "border-primary text-foreground font-medium"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          )}
-        >
-          <Zap className="w-3 h-3" />
-          AI Reply
-        </button>
-        <button
-          onClick={() => setComposeMode("manual")}
-          className={cn(
-            "flex items-center gap-1.5 px-4 py-2 text-xs border-b-2 -mb-px transition-colors",
-            composeMode === "manual"
-              ? "border-primary text-foreground font-medium"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          )}
-        >
-          <Edit3 className="w-3 h-3" />
-          Write Manually
-        </button>
-      </div>
-
-      {/* Style note editor (collapsible) */}
-      {showStyleNote && (
-        <div className="px-4 py-3 border-b border-border bg-sidebar-accent/20 shrink-0 space-y-2">
-          <p className="text-xs font-medium text-foreground">Personal style note</p>
-          <p className="text-[11px] text-muted-foreground">
-            Describe how you like to write. This supplements the AI&apos;s analysis of your
-            email history.
-          </p>
-          <textarea
-            rows={3}
-            value={styleNote}
-            onChange={(e) => setStyleNote(e.target.value)}
-            placeholder="e.g. Keep it direct, use casual language, always end with a clear next step..."
-            className="w-full text-xs bg-sidebar-accent/40 border border-border p-2 text-foreground placeholder:text-muted-foreground/50 resize-none focus:outline-none focus:border-primary/50"
-          />
-          <div className="flex gap-2">
-            <button
-              onClick={handleSaveStyleNote}
-              className="text-xs bg-foreground text-background px-3 py-1.5 hover:opacity-90 transition-opacity"
-            >
-              Save note
-            </button>
-            <button
-              onClick={() => setShowStyleNote(false)}
-              className="text-xs text-muted-foreground hover:text-foreground"
-            >
-              Cancel
-            </button>
-          </div>
-          {!hasToneProfile && (
-            <p className="text-[11px] text-amber-400">
-              No tone profile yet.{" "}
-              <button
-                className="underline hover:no-underline"
-                onClick={async () => {
-                  toast.info("Analyzing your sent emails...");
-                  const res = await fetch("/api/email/analyze-tone", {
-                    method: "POST",
-                  });
-                  if (res.ok) {
-                    const d = await res.json();
-                    toast.success(`Tone profile built from ${d.sampleCount} sent emails.`);
-                  } else {
-                    toast.error("Tone analysis failed.");
-                  }
-                }}
-              >
-                Analyze my email history
-              </button>
+          {replyRecipients.length > 0 && (
+            <p className="text-[11px] text-muted-foreground/60 mt-0.5">
+              → {replyRecipients.join(", ")}
             </p>
           )}
         </div>
-      )}
-
-      {/* ── AI MODE ── */}
-      {composeMode === "ai" && (
-        <div className="flex-1 overflow-y-auto p-4 space-y-5">
-          {/* Generate button */}
-          {!hasVariants && !generating && (
-            <button
-              onClick={handleGenerate}
-              className="w-full flex items-center justify-center gap-2 py-3 text-sm font-medium bg-foreground text-background hover:opacity-90 transition-opacity"
-            >
-              <Zap className="w-4 h-4" />
-              Generate reply variants
-            </button>
-          )}
-
-          {hasVariants && !generating && (
-            <button
-              onClick={handleGenerate}
-              className="w-full flex items-center justify-center gap-2 py-2 text-xs border border-border text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
-            >
-              Regenerate all variants
-            </button>
-          )}
-
-          {/* Dictation notes */}
-          <div className="border border-border/50">
-            <button
-              onClick={() => setShowDictation((v) => !v)}
-              className="w-full flex items-center justify-between px-3 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors bg-sidebar-accent/10"
-            >
-              <div className="flex items-center gap-1.5">
-                <Mic className="w-3 h-3" />
-                <span>Dictation notes</span>
-                {dictationNotes && (
-                  <span className="text-[10px] text-primary/70 font-medium">● active</span>
-                )}
-              </div>
-              <ChevronDown className={cn("w-3 h-3 transition-transform", showDictation && "rotate-180")} />
-            </button>
-            {showDictation && (
-              <div className="p-3 space-y-2 border-t border-border/50">
-                <p className="text-[11px] text-muted-foreground">
-                  Speak your reply ideas or instructions. Claude will use these when generating.
-                </p>
-                <div className="relative">
-                  <textarea
-                    value={dictationNotes}
-                    onChange={(e) => setDictationNotes(e.target.value)}
-                    placeholder="Tap the mic and start talking, or type here..."
-                    rows={4}
-                    className="w-full resize-none text-xs text-foreground bg-sidebar-accent/30 border border-border p-2.5 focus:outline-none focus:border-primary/50 placeholder:text-muted-foreground/40 leading-relaxed"
-                  />
-                  {isListening && (
-                    <div className="absolute top-2 right-2 flex items-center gap-1 text-[10px] text-red-400">
-                      <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
-                      Listening
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={toggleDictation}
-                    className={cn(
-                      "flex items-center gap-1.5 text-xs px-3 py-1.5 border transition-colors",
-                      isListening
-                        ? "border-red-400/60 text-red-400 hover:bg-red-400/10"
-                        : "border-border text-muted-foreground hover:text-foreground hover:border-primary/40"
-                    )}
-                  >
-                    {isListening ? (
-                      <><MicOff className="w-3 h-3" /> Stop</>
-                    ) : (
-                      <><Mic className="w-3 h-3" /> {dictationNotes ? "Continue" : "Start"}</>
-                    )}
-                  </button>
-                  {dictationNotes && (
-                    <button
-                      onClick={() => { setDictationNotes(""); recognitionRef.current?.stop(); setIsListening(false); }}
-                      className="flex items-center gap-1 text-xs text-muted-foreground/50 hover:text-muted-foreground transition-colors"
-                    >
-                      <Trash2 className="w-3 h-3" /> Clear
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Variants */}
-          <ResponseVariants
-            variants={variants}
-            activeVariant={activeVariant}
-            generating={generating}
-            regenLoading={regenLoading}
-            onVariantChange={(type, value) =>
-              setVariants((prev) => ({ ...prev, [type]: value }))
-            }
-            onActiveVariantChange={setActiveVariant}
-            onRegen={handleRegen}
-            insertRef={insertRef}
-          />
-
-          {/* Smart inserts */}
-          {(hasVariants || generating) && (
-            <SmartInsertsSidebar
-              inserts={smartInserts}
-              generating={generating}
-              onInsert={(text) => insertRef.current?.(text)}
-            />
-          )}
-        </div>
-      )}
-
-      {/* ── MANUAL MODE ── */}
-      {composeMode === "manual" && (
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Formatting toolbar */}
-          <div className="flex items-center gap-0.5 px-3 py-2 border-b border-border bg-sidebar-accent/20 shrink-0">
-            <button
-              onMouseDown={(e) => { e.preventDefault(); execFormat("bold"); }}
-              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-colors"
-              title="Bold (Ctrl+B)"
-            >
-              <Bold className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onMouseDown={(e) => { e.preventDefault(); execFormat("italic"); }}
-              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-colors"
-              title="Italic (Ctrl+I)"
-            >
-              <Italic className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onMouseDown={(e) => { e.preventDefault(); execFormat("underline"); }}
-              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-colors"
-              title="Underline (Ctrl+U)"
-            >
-              <Underline className="w-3.5 h-3.5" />
-            </button>
-            <div className="w-px h-4 bg-border mx-1" />
-            <button
-              onMouseDown={(e) => { e.preventDefault(); handleLink(); }}
-              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-colors"
-              title="Insert link"
-            >
-              <Link className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onMouseDown={(e) => { e.preventDefault(); execFormat("insertUnorderedList"); }}
-              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-colors"
-              title="Bullet list"
-            >
-              <List className="w-3.5 h-3.5" />
-            </button>
-            <div className="w-px h-4 bg-border mx-1" />
-            <button
-              onMouseDown={(e) => { e.preventDefault(); fileInputRef.current?.click(); }}
-              className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-colors"
-              title="Attach file"
-            >
-              <Paperclip className="w-3.5 h-3.5" />
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                const files = Array.from(e.target.files ?? []);
-                setAttachments((prev) => [...prev, ...files]);
-                e.target.value = "";
-              }}
-            />
-          </div>
-
-          {/* Attachment chips */}
-          {attachments.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 px-3 py-2 border-b border-border/40 bg-sidebar-accent/10 shrink-0">
-              {attachments.map((file, i) => (
-                <div
-                  key={i}
-                  className="flex items-center gap-1.5 text-[11px] border border-border/50 px-2 py-1 text-foreground/70 bg-background"
-                >
-                  <Paperclip className="w-2.5 h-2.5 shrink-0" />
-                  <span className="truncate max-w-[120px]">{file.name}</span>
-                  <button
-                    onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
-                    className="ml-0.5 text-muted-foreground/40 hover:text-foreground transition-colors"
-                  >
-                    <X className="w-2.5 h-2.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Contenteditable editor */}
-          <div
-            ref={editorRef}
-            contentEditable
-            suppressContentEditableWarning
-            data-placeholder="Write your reply..."
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                // Allow default — natural line breaks in contenteditable
-              }
-            }}
+        <div className="flex items-center gap-2 shrink-0">
+          {/* CC toggle */}
+          <button
+            onClick={() => setShowCc((v) => !v)}
             className={cn(
-              "flex-1 overflow-y-auto p-4 text-sm text-foreground leading-relaxed focus:outline-none",
-              "empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground/40"
+              "text-[10px] px-2 py-0.5 border transition-colors flex items-center gap-1",
+              showCc
+                ? "border-primary/40 text-primary bg-primary/5"
+                : "border-border/40 text-muted-foreground/50 hover:text-foreground"
             )}
+          >
+            <Users className="w-2.5 h-2.5" />
+            CC
+          </button>
+          <button
+            onClick={onClose}
+            className="text-muted-foreground/50 hover:text-foreground transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* ── CC field ── */}
+      {showCc && (
+        <div className="px-4 py-2 border-b border-border/40 bg-sidebar-accent/5">
+          <div className="flex items-start gap-2">
+            <span className="text-[10px] text-muted-foreground/40 uppercase tracking-wide font-semibold pt-2 shrink-0 w-5">CC</span>
+            <ContactAutocomplete value={ccRecipients} onChange={setCcRecipients} />
+          </div>
+        </div>
+      )}
+
+      {/* ── Mode toggle ── */}
+      <div className="flex items-center gap-3 px-4 py-2 border-b border-border/40">
+        <div className="flex border border-border/60">
+          <button
+            onClick={() => { setMode("write"); setAiGenerated(false); }}
+            className={cn(
+              "px-3 py-1 text-[11px] transition-colors",
+              mode === "write"
+                ? "bg-foreground text-background font-medium"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            Write
+          </button>
+          <button
+            onClick={() => setMode("ai")}
+            className={cn(
+              "px-3 py-1 text-[11px] transition-colors flex items-center gap-1",
+              mode === "ai"
+                ? "bg-foreground text-background font-medium"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Zap className="w-2.5 h-2.5" />
+            AI Assist
+          </button>
+        </div>
+
+        {/* Tone picker — only visible in AI mode */}
+        {mode === "ai" && (
+          <div className="relative">
+            <button
+              onClick={() => setShowTonePicker((v) => !v)}
+              className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground border border-border/40 px-2.5 py-1 transition-colors"
+            >
+              {TONE_LABELS[tone]}
+              <ChevronDown className={cn("w-2.5 h-2.5 transition-transform", showTonePicker && "rotate-180")} />
+            </button>
+            {showTonePicker && (
+              <div className="absolute top-full left-0 mt-1 w-32 border border-border bg-background shadow-lg z-10">
+                {(["punchy", "balanced", "detailed"] as ToneType[]).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => { setTone(t); setShowTonePicker(false); }}
+                    className={cn(
+                      "w-full text-left px-3 py-2 text-[11px] transition-colors",
+                      tone === t ? "bg-sidebar-accent text-foreground font-medium" : "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/50"
+                    )}
+                  >
+                    {TONE_LABELS[t]}
+                    <span className="ml-1 text-[10px] text-muted-foreground/50">
+                      {t === "punchy" ? "short" : t === "balanced" ? "standard" : "thorough"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!hasToneProfile && mode === "ai" && (
+          <span className="text-[10px] text-amber-400/70 ml-auto">
+            No tone profile —{" "}
+            <button
+              className="underline hover:no-underline"
+              onClick={async () => {
+                toast.info("Analyzing your sent emails...");
+                const res = await fetch("/api/email/analyze-tone", { method: "POST" });
+                if (res.ok) {
+                  const d = await res.json();
+                  toast.success(`Tone profile built from ${d.sampleCount} sent emails.`);
+                } else {
+                  toast.error("Tone analysis failed.");
+                }
+              }}
+            >
+              build one
+            </button>
+          </span>
+        )}
+      </div>
+
+      {/* ── AI notes (only visible when AI mode and no generated content yet) ── */}
+      {mode === "ai" && !aiGenerated && (
+        <div className="px-4 pt-3 pb-2 border-b border-border/30 bg-sidebar-accent/5">
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-wider">
+              Your notes
+            </label>
+            <button
+              onClick={toggleDictation}
+              className={cn(
+                "flex items-center gap-1 text-[10px] px-2 py-0.5 border transition-colors",
+                isListening
+                  ? "border-red-400/60 text-red-400 bg-red-400/5"
+                  : "border-border/40 text-muted-foreground/50 hover:text-foreground"
+              )}
+            >
+              {isListening ? <MicOff className="w-2.5 h-2.5" /> : <Mic className="w-2.5 h-2.5" />}
+              {isListening ? "Stop" : "Dictate"}
+              {isListening && <span className="w-1 h-1 rounded-full bg-red-400 animate-pulse" />}
+            </button>
+          </div>
+          <textarea
+            value={aiNotes}
+            onChange={(e) => setAiNotes(e.target.value)}
+            placeholder="Tell me what you want to say — I'll write it in your voice..."
+            rows={3}
+            className="w-full resize-none text-[13px] text-foreground bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground/30 leading-relaxed"
           />
         </div>
       )}
 
-      {/* Send footer */}
-      <div className="px-4 py-3 border-t border-border shrink-0 flex items-center justify-between gap-3">
-        {composeMode === "ai" ? (
-          <span className="text-[11px] text-muted-foreground">
-            Sending{" "}
-            <span className="font-medium text-foreground capitalize">{activeVariant}</span>
-            {" variant"}
+      {/* ── If AI generated, show a small notes reminder ── */}
+      {mode === "ai" && aiGenerated && aiNotes && (
+        <div className="px-4 py-1.5 border-b border-border/20 bg-sidebar-accent/5 flex items-center gap-2">
+          <span className="text-[10px] text-muted-foreground/40 truncate flex-1">
+            From your notes: {aiNotes.slice(0, 60)}{aiNotes.length > 60 ? "…" : ""}
           </span>
-        ) : (
-          <span className="text-[11px] text-muted-foreground">Manual reply</span>
+          <button
+            onClick={() => { setAiGenerated(false); setText(""); }}
+            className="text-[10px] text-muted-foreground/40 hover:text-foreground transition-colors shrink-0"
+          >
+            Edit notes
+          </button>
+        </div>
+      )}
+
+      {/* ── Main compose textarea ── */}
+      <div className="relative px-4 pt-3 pb-2 flex-1">
+        {/* Dictation button for Write mode */}
+        {mode === "write" && (
+          <button
+            onClick={toggleDictation}
+            className={cn(
+              "absolute top-4 right-5 flex items-center gap-1 text-[10px] px-2 py-0.5 border transition-colors z-10",
+              isListening
+                ? "border-red-400/60 text-red-400 bg-red-400/5 bg-background"
+                : "border-border/30 text-muted-foreground/40 hover:text-foreground bg-background"
+            )}
+          >
+            {isListening ? <MicOff className="w-2.5 h-2.5" /> : <Mic className="w-2.5 h-2.5" />}
+            {isListening && <span className="w-1 h-1 rounded-full bg-red-400 animate-pulse" />}
+          </button>
         )}
+
+        {isGenerating ? (
+          <div className="min-h-[120px] flex items-center justify-center gap-2 text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span className="text-xs">Writing in your voice...</span>
+          </div>
+        ) : (
+          <textarea
+            ref={textareaRef}
+            value={text}
+            onChange={(e) => { setText(e.target.value); setAiGenerated(false); }}
+            placeholder={
+              mode === "ai"
+                ? aiGenerated
+                  ? "Edit this or send as-is..."
+                  : "Your generated email will appear here after you click Generate..."
+                : "Write your reply..."
+            }
+            className={cn(
+              "w-full resize-none text-[13px] text-foreground bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground/30 leading-relaxed",
+              mode === "write" && "pr-16",
+              !text && mode === "ai" && !aiGenerated && "min-h-[80px]",
+              text && "min-h-[120px]"
+            )}
+            style={{ minHeight: "120px" }}
+          />
+        )}
+      </div>
+
+      {/* ── Generate button (AI mode, when notes present and not yet generated) ── */}
+      {mode === "ai" && !aiGenerated && canGenerate && !isGenerating && (
+        <div className="px-4 pb-3">
+          <button
+            onClick={handleGenerate}
+            className="w-full flex items-center justify-center gap-2 py-2.5 text-xs font-semibold bg-foreground text-background hover:opacity-90 transition-opacity"
+          >
+            <Zap className="w-3.5 h-3.5" />
+            Generate email in my voice
+          </button>
+        </div>
+      )}
+
+      {/* ── Regen button (AI mode, after generation) ── */}
+      {mode === "ai" && aiGenerated && !isGenerating && (
+        <div className="px-4 pb-2">
+          <button
+            onClick={handleRegen}
+            className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground border border-border/40 px-3 py-1.5 transition-colors"
+          >
+            <RefreshCw className="w-3 h-3" />
+            Regenerate ({TONE_LABELS[tone]})
+          </button>
+        </div>
+      )}
+
+      {/* ── Attachments ── */}
+      {attachments.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 px-4 py-2 border-t border-border/30">
+          {attachments.map((file, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-1.5 text-[11px] border border-border/50 px-2 py-1 text-foreground/70 bg-sidebar-accent/20"
+            >
+              <Paperclip className="w-2.5 h-2.5 shrink-0" />
+              <span className="truncate max-w-[120px]">{file.name}</span>
+              <button
+                onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                className="text-muted-foreground/40 hover:text-foreground transition-colors"
+              >
+                <X className="w-2.5 h-2.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Schedule picker ── */}
+      {showSchedule && (
+        <div className="px-4 py-2 border-t border-border/30 flex items-center gap-2">
+          <Clock className="w-3 h-3 text-muted-foreground/50 shrink-0" />
+          <input
+            type="datetime-local"
+            value={scheduledAt}
+            onChange={(e) => setScheduledAt(e.target.value)}
+            className="text-xs bg-transparent border-0 text-foreground focus:outline-none"
+          />
+          {scheduledAt && (
+            <button
+              onClick={() => { setScheduledAt(""); setShowSchedule(false); }}
+              className="text-[10px] text-muted-foreground/50 hover:text-foreground transition-colors"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── Footer toolbar + send ── */}
+      <div className="flex items-center justify-between gap-2 px-3 py-2.5 border-t border-border/60">
+        {/* Formatting + tools */}
+        <div className="flex items-center gap-0.5">
+          <button
+            onMouseDown={(e) => { e.preventDefault(); execFormat("bold"); }}
+            className="w-6 h-6 flex items-center justify-center text-muted-foreground/50 hover:text-foreground hover:bg-sidebar-accent/50 transition-colors"
+            title="Bold"
+          >
+            <Bold className="w-3 h-3" />
+          </button>
+          <button
+            onMouseDown={(e) => { e.preventDefault(); execFormat("italic"); }}
+            className="w-6 h-6 flex items-center justify-center text-muted-foreground/50 hover:text-foreground hover:bg-sidebar-accent/50 transition-colors"
+            title="Italic"
+          >
+            <Italic className="w-3 h-3" />
+          </button>
+          <button
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const url = prompt("Enter URL:");
+              if (url) execFormat("createLink", url);
+            }}
+            className="w-6 h-6 flex items-center justify-center text-muted-foreground/50 hover:text-foreground hover:bg-sidebar-accent/50 transition-colors"
+            title="Insert link"
+          >
+            <Link className="w-3 h-3" />
+          </button>
+          <button
+            onMouseDown={(e) => { e.preventDefault(); execFormat("insertUnorderedList"); }}
+            className="w-6 h-6 flex items-center justify-center text-muted-foreground/50 hover:text-foreground hover:bg-sidebar-accent/50 transition-colors"
+            title="Bullet list"
+          >
+            <List className="w-3 h-3" />
+          </button>
+          <div className="w-px h-4 bg-border/40 mx-1" />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="w-6 h-6 flex items-center justify-center text-muted-foreground/50 hover:text-foreground hover:bg-sidebar-accent/50 transition-colors"
+            title="Attach file"
+          >
+            <Paperclip className="w-3 h-3" />
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              setAttachments((prev) => [...prev, ...Array.from(e.target.files ?? [])]);
+              e.target.value = "";
+            }}
+          />
+          <button
+            onClick={() => setShowSchedule((v) => !v)}
+            className={cn(
+              "w-6 h-6 flex items-center justify-center transition-colors",
+              showSchedule || scheduledAt
+                ? "text-primary"
+                : "text-muted-foreground/50 hover:text-foreground hover:bg-sidebar-accent/50"
+            )}
+            title="Schedule send"
+          >
+            <Clock className="w-3 h-3" />
+          </button>
+        </div>
+
         <button
           onClick={handleSend}
-          disabled={isSending}
-          className="flex items-center gap-2 text-xs font-medium bg-foreground text-background px-4 py-2 hover:opacity-90 transition-opacity disabled:opacity-40"
+          disabled={isSending || !canSend || isGenerating}
+          className="flex items-center gap-2 text-xs font-semibold bg-foreground text-background px-4 py-2 hover:opacity-90 transition-opacity disabled:opacity-30"
         >
           {isSending ? (
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
           ) : (
             <Send className="w-3.5 h-3.5" />
           )}
-          Send reply
+          {scheduledAt ? "Schedule" : "Send"}
         </button>
       </div>
+
+      {/* ── Keyboard hint: Cmd/Ctrl+Enter to send ── */}
+      <div
+        className="px-4 pb-1.5"
+        onKeyDown={(e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === "Enter") handleSend();
+        }}
+      />
     </div>
   );
 }
