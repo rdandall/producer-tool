@@ -90,11 +90,30 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
       setState("processing");
       setShowTextFallback(false);
 
+      // Smart-enhance the transcript before sending to AI intent parser
+      let cleanedText = text;
+      try {
+        const enhanceRes = await fetch("/api/dictation/enhance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        if (enhanceRes.ok) {
+          const enhanceData = await enhanceRes.json();
+          if (enhanceData.enhanced) {
+            cleanedText = enhanceData.enhanced;
+            setTranscript(cleanedText);
+          }
+        }
+      } catch {
+        // Fall back to raw transcript if enhance fails
+      }
+
       try {
         const res = await fetch("/api/assistant", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ transcript: text, page: getPageName() }),
+          body: JSON.stringify({ transcript: cleanedText, page: getPageName() }),
         });
         if (!res.ok) throw new Error("API error");
         const data = await res.json();

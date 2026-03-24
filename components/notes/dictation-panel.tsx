@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mic, Sparkles, Trash2, ChevronDown } from "lucide-react";
+import { Mic, Sparkles, Trash2, ChevronDown, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { NoteType } from "@/lib/db/notes";
 
@@ -40,6 +40,7 @@ export function DictationPanel({
   const [speechSupported, setSpeechSupported] = useState(false);
   const [showTypeDropdown, setShowTypeDropdown] = useState(false);
   const [wordCount, setWordCount] = useState(0);
+  const [isEnhancing, setIsEnhancing] = useState(false);
 
   const recognitionRef = useRef<AnySpeechRecognition>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -62,6 +63,27 @@ export function DictationPanel({
     }
   }, [rawInput, interimTranscript]);
 
+  const enhanceTranscript = useCallback(async (text: string) => {
+    if (!text.trim() || text.trim().split(/\s+/).length < 5) return; // skip very short text
+    setIsEnhancing(true);
+    try {
+      const res = await fetch("/api/dictation/enhance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.enhanced && data.enhanced !== text) {
+        setRawInput(data.enhanced);
+      }
+    } catch {
+      // silent — fall back to raw transcript
+    } finally {
+      setIsEnhancing(false);
+    }
+  }, []);
+
   const startRecording = useCallback(() => {
     const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition;
     if (!SR) return;
@@ -71,22 +93,26 @@ export function DictationPanel({
     recognition.interimResults = true;
     recognition.lang = "en-US";
 
+    // Accumulate final text in a closure variable (not state) so onend can read it
+    let sessionFinal = "";
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     recognition.onresult = (event: any) => {
       let interim = "";
-      let final = "";
+      let finalChunk = "";
 
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const transcript = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          final += transcript + " ";
+          finalChunk += transcript + " ";
         } else {
           interim += transcript;
         }
       }
 
-      if (final) {
-        setRawInput((prev) => prev + final);
+      if (finalChunk) {
+        sessionFinal += finalChunk;
+        setRawInput((prev) => prev + finalChunk);
         setInterimTranscript("");
       } else {
         setInterimTranscript(interim);
@@ -101,12 +127,15 @@ export function DictationPanel({
     recognition.onend = () => {
       setIsRecording(false);
       setInterimTranscript("");
+      // Auto-enhance the dictated text when recording stops
+      const fullText = sessionFinal.trim();
+      if (fullText) enhanceTranscript(fullText);
     };
 
     recognitionRef.current = recognition;
     recognition.start();
     setIsRecording(true);
-  }, []);
+  }, [enhanceTranscript]);
 
   const stopRecording = useCallback(() => {
     recognitionRef.current?.stop();
@@ -263,10 +292,13 @@ export function DictationPanel({
         {speechSupported && (
           <button
             onClick={isRecording ? stopRecording : startRecording}
+            disabled={isEnhancing}
             className={cn(
               "relative flex items-center gap-2 px-3 py-1.5 text-[12px] font-medium transition-all border",
               isRecording
                 ? "border-destructive text-destructive bg-destructive/5 hover:bg-destructive/10"
+                : isEnhancing
+                ? "border-border text-muted-foreground/40 cursor-not-allowed"
                 : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
             )}
           >
@@ -285,6 +317,19 @@ export function DictationPanel({
               </>
             )}
           </button>
+        )}
+
+        {/* Smart enhance indicator */}
+        {isEnhancing && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="flex items-center gap-1.5 text-[11px] text-muted-foreground/60"
+          >
+            <Wand2 className="w-3 h-3 animate-pulse text-primary/60" />
+            Cleaning up…
+          </motion.div>
         )}
 
         {/* Clear */}

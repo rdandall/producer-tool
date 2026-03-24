@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Search, RefreshCw, CheckCircle2, X, ListChecks, ChevronDown, PenSquare } from "lucide-react";
+import { Search, RefreshCw, CheckCircle2, X, ListChecks, ChevronDown, PenSquare, Inbox, Send } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import type { StoredEmail, EmailTaskSuggestion } from "@/lib/db/emails";
@@ -30,6 +30,8 @@ interface EmailListPanelProps {
   projects: Project[];
   isSyncing: boolean;
   search: string;
+  activeFolder: "inbox" | "sent";
+  onFolderChange: (folder: "inbox" | "sent") => void;
   onSearchChange: (v: string) => void;
   onSelectThread: (threadId: string, latestMessageId: string) => void;
   onSync: () => void;
@@ -68,8 +70,12 @@ function formatDate(dateStr: string | null): string {
   const date = new Date(dateStr);
   const now = new Date();
   const isToday = date.toDateString() === now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday = date.toDateString() === yesterday.toDateString();
   const isThisYear = date.getFullYear() === now.getFullYear();
   if (isToday) return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (isYesterday) return "Yesterday";
   if (isThisYear) return date.toLocaleDateString([], { month: "short", day: "numeric" });
   return date.toLocaleDateString([], { month: "short", day: "numeric", year: "2-digit" });
 }
@@ -94,6 +100,8 @@ export function EmailListPanel({
   projects,
   isSyncing,
   search,
+  activeFolder,
+  onFolderChange,
   onSearchChange,
   onSelectThread,
   onSync,
@@ -103,7 +111,11 @@ export function EmailListPanel({
 }: EmailListPanelProps) {
   const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
 
-  const allThreads = buildThreads(emails.filter((e) => !e.is_sent));
+  const folderEmails = activeFolder === "sent"
+    ? emails.filter((e) => e.is_sent)
+    : emails.filter((e) => !e.is_sent);
+
+  const allThreads = buildThreads(folderEmails);
   const filtered = search.trim()
     ? allThreads.filter(
         (t) =>
@@ -115,25 +127,56 @@ export function EmailListPanel({
     : allThreads;
 
   const pendingCount = taskSuggestions.length;
+  const isNarrow = !!selectedThreadId; // when thread is open, list shrinks to sidebar
 
   return (
-    <div className="flex flex-col h-full border-r border-border">
-      {/* ── Header ─────────────────────────────────────────────────────── */}
-      <div className="px-3 py-3 border-b border-border space-y-2.5 shrink-0">
+    <div className="flex flex-col h-full bg-background">
+      {/* ── Top bar: folder tabs + actions ─────────────────── */}
+      <div className={cn(
+        "px-3 pt-3 border-b border-border space-y-2 shrink-0",
+        isNarrow ? "pb-2" : "pb-2.5"
+      )}>
+        {/* Row 1: folder tabs + actions */}
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] font-semibold text-foreground uppercase tracking-widest">
-            Inbox
-          </span>
-          <div className="flex items-center gap-1.5">
-            {/* Task badge */}
-            {pendingCount > 0 && (
+          {/* Folder tabs */}
+          <div className="flex items-center gap-0.5">
+            <button
+              onClick={() => onFolderChange("inbox")}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold transition-colors",
+                activeFolder === "inbox"
+                  ? "text-foreground border-b-2 border-primary -mb-[1px]"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <Inbox className="w-3 h-3" />
+              {!isNarrow && "Inbox"}
+            </button>
+            <button
+              onClick={() => onFolderChange("sent")}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold transition-colors",
+                activeFolder === "sent"
+                  ? "text-foreground border-b-2 border-primary -mb-[1px]"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <Send className="w-3 h-3" />
+              {!isNarrow && "Sent"}
+            </button>
+          </div>
+
+          {/* Action buttons */}
+          <div className="flex items-center gap-1">
+            {/* Task badge — only in inbox */}
+            {activeFolder === "inbox" && pendingCount > 0 && (
               <button
                 onClick={() => setTaskDrawerOpen((v) => !v)}
                 className={cn(
                   "flex items-center gap-1 text-[10px] font-medium px-2 py-1 border transition-colors",
                   taskDrawerOpen
                     ? "bg-primary/10 border-primary/40 text-primary"
-                    : "bg-sidebar-accent/50 border-border text-foreground/70 hover:border-primary/30 hover:text-foreground"
+                    : "bg-sidebar-accent/50 border-border text-foreground/70 hover:border-primary/30"
                 )}
               >
                 <ListChecks className="w-3 h-3" />
@@ -141,7 +184,6 @@ export function EmailListPanel({
                 <ChevronDown className={cn("w-2.5 h-2.5 transition-transform", taskDrawerOpen && "rotate-180")} />
               </button>
             )}
-            {/* Sync button */}
             <button
               onClick={onSync}
               disabled={isSyncing}
@@ -150,7 +192,6 @@ export function EmailListPanel({
             >
               <RefreshCw className={cn("w-3.5 h-3.5", isSyncing && "animate-spin")} />
             </button>
-            {/* Compose button */}
             <button
               onClick={onCompose}
               className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
@@ -166,7 +207,7 @@ export function EmailListPanel({
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground/40" />
           <input
             type="text"
-            placeholder="Search emails…"
+            placeholder={`Search ${activeFolder}…`}
             value={search}
             onChange={(e) => onSearchChange(e.target.value)}
             className="w-full pl-7 pr-2.5 py-1.5 text-xs bg-sidebar-accent/30 border border-border text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/40 transition-colors"
@@ -174,9 +215,9 @@ export function EmailListPanel({
         </div>
       </div>
 
-      {/* ── Task suggestion drawer ──────────────────────────────────────── */}
+      {/* ── Task suggestion drawer ── */}
       <AnimatePresence>
-        {taskDrawerOpen && pendingCount > 0 && (
+        {taskDrawerOpen && pendingCount > 0 && activeFolder === "inbox" && (
           <motion.div
             key="task-drawer"
             initial={{ height: 0, opacity: 0 }}
@@ -194,7 +235,7 @@ export function EmailListPanel({
                     initial={{ opacity: 0, x: -8 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.04 }}
-                    className="flex items-start gap-2 px-3 py-2.5 border-b border-border/30 last:border-0 hover:bg-sidebar-accent/40 transition-colors group"
+                    className="flex items-start gap-2 px-3 py-2.5 border-b border-border/30 last:border-0 hover:bg-sidebar-accent/40 transition-colors"
                   >
                     <div className="flex-1 min-w-0">
                       <p className={cn("text-[11px] font-medium leading-snug line-clamp-2", PRIORITY_RING[s.priority] ?? "text-foreground/70")}>
@@ -243,21 +284,21 @@ export function EmailListPanel({
         )}
       </AnimatePresence>
 
-      {/* ── Thread list ────────────────────────────────────────────────── */}
+      {/* ── Thread list ── */}
       <div className="flex-1 overflow-y-auto">
         {filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-32 gap-2">
             <p className="text-xs text-muted-foreground/40">
-              {emails.length === 0 ? "No emails synced yet. Click Sync." : "No results."}
+              {folderEmails.length === 0
+                ? activeFolder === "sent"
+                  ? "No sent emails synced yet."
+                  : "No emails synced yet. Click Sync."
+                : "No results."}
             </p>
           </div>
         ) : (
-          <motion.div
-            initial="hidden"
-            animate="show"
-            variants={{ show: { transition: { staggerChildren: 0.03 } } }}
-          >
-            {filtered.map((thread) => {
+          <div>
+            {filtered.map((thread, idx) => {
               const isSelected = selectedThreadId === thread.threadId;
               const senderName = thread.fromName || thread.fromEmail;
               const avatarColor = getAvatarColor(senderName);
@@ -268,65 +309,101 @@ export function EmailListPanel({
               return (
                 <motion.button
                   key={thread.threadId}
-                  variants={{
-                    hidden: { opacity: 0, y: 6 },
-                    show: { opacity: 1, y: 0, transition: { duration: 0.18 } },
-                  }}
+                  initial={{ opacity: 0, y: 3 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.12, delay: Math.min(idx * 0.015, 0.3) }}
                   onClick={() => onSelectThread(thread.threadId, thread.latestMessageId)}
                   className={cn(
-                    "w-full text-left px-3 py-3 border-b border-border/30 transition-colors flex items-start gap-2.5",
+                    "w-full text-left border-b border-border/20 transition-colors",
                     isSelected
-                      ? "bg-sidebar-accent border-l-[3px] border-l-primary"
-                      : "hover:bg-sidebar-accent/40 border-l-[3px] border-l-transparent"
+                      ? "bg-primary/8 border-l-[3px] border-l-primary"
+                      : "hover:bg-sidebar-accent/40 border-l-[3px] border-l-transparent",
+                    isNarrow ? "px-3 py-2.5" : "px-4 py-3"
                   )}
                 >
-                  {/* Avatar */}
-                  <div
-                    className="w-8 h-8 flex items-center justify-center text-[12px] font-bold text-white shrink-0 mt-0.5"
-                    style={{ backgroundColor: avatarColor }}
-                  >
-                    {senderName.charAt(0).toUpperCase()}
-                  </div>
-
-                  {/* Content */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2 mb-0.5">
-                      <span
-                        className={cn(
-                          "text-xs truncate",
-                          thread.isRead ? "text-muted-foreground" : "text-foreground font-semibold"
-                        )}
+                  {isNarrow ? (
+                    /* ── Compact sidebar row (when thread is open) ── */
+                    <div className="flex items-start gap-2">
+                      <div
+                        className="w-7 h-7 flex items-center justify-center text-[11px] font-bold text-white shrink-0 mt-0.5"
+                        style={{ backgroundColor: avatarColor }}
                       >
-                        {senderName}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground/50 shrink-0">
-                        {formatDate(thread.receivedAt)}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-foreground/70 truncate">{thread.subject}</p>
-                    <p className="text-[10px] text-muted-foreground/50 truncate mt-0.5">
-                      {thread.snippet}
-                    </p>
-                    {/* Badges row */}
-                    {(thread.messageCount > 1 || hasPendingTasks) && (
-                      <div className="flex items-center gap-1.5 mt-1">
-                        {thread.messageCount > 1 && (
-                          <span className="text-[10px] text-muted-foreground/50 border border-border/40 px-1.5 py-px">
-                            {thread.messageCount}
+                        {senderName.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-1 mb-0.5">
+                          <span className={cn("text-[11px] truncate", !thread.isRead ? "font-semibold text-foreground" : "text-muted-foreground")}>
+                            {senderName}
                           </span>
+                          <span className="text-[9px] text-muted-foreground/50 shrink-0">{formatDate(thread.receivedAt)}</span>
+                        </div>
+                        <p className={cn("text-[10px] truncate", !thread.isRead ? "text-foreground/80 font-medium" : "text-muted-foreground/60")}>
+                          {thread.subject}
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    /* ── Full Gmail-style row (when no thread selected) ── */
+                    <div className="flex items-center gap-3">
+                      {/* Avatar */}
+                      <div
+                        className="w-9 h-9 flex items-center justify-center text-[13px] font-bold text-white shrink-0"
+                        style={{ backgroundColor: avatarColor }}
+                      >
+                        {senderName.charAt(0).toUpperCase()}
+                      </div>
+
+                      {/* Sender (fixed width) */}
+                      <div className="w-36 shrink-0">
+                        <span className={cn(
+                          "text-[13px] truncate block",
+                          !thread.isRead ? "font-semibold text-foreground" : "font-normal text-muted-foreground"
+                        )}>
+                          {senderName}
+                        </span>
+                        {thread.messageCount > 1 && (
+                          <span className="text-[10px] text-muted-foreground/50">{thread.messageCount}</span>
                         )}
+                      </div>
+
+                      {/* Subject + snippet */}
+                      <div className="flex-1 min-w-0 flex items-center gap-1.5 overflow-hidden">
+                        <span className={cn(
+                          "text-[13px] shrink-0",
+                          !thread.isRead ? "font-semibold text-foreground" : "text-foreground/70"
+                        )}>
+                          {thread.subject}
+                        </span>
+                        {thread.snippet && (
+                          <>
+                            <span className="text-muted-foreground/30 shrink-0">—</span>
+                            <span className="text-[12px] text-muted-foreground/60 truncate">
+                              {thread.snippet}
+                            </span>
+                          </>
+                        )}
+                      </div>
+
+                      {/* Badges + time */}
+                      <div className="flex items-center gap-2 shrink-0">
                         {hasPendingTasks && (
                           <span className="text-[10px] text-primary border border-primary/30 bg-primary/5 px-1.5 py-px font-medium">
                             tasks
                           </span>
                         )}
+                        {!thread.isRead && (
+                          <span className="w-2 h-2 rounded-full bg-primary shrink-0" />
+                        )}
+                        <span className="text-[11px] text-muted-foreground/60 w-16 text-right">
+                          {formatDate(thread.receivedAt)}
+                        </span>
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </motion.button>
               );
             })}
-          </motion.div>
+          </div>
         )}
       </div>
     </div>

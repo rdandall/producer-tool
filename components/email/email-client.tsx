@@ -70,12 +70,59 @@ interface EmailClientProps {
   userEmail: string;
 }
 
+/**
+ * Words that signal a date is being used in a scheduling/availability context.
+ * If none of these appear near the date, it's likely a reference date (invoice
+ * date, link expiry, etc.) rather than a proposed shoot/meeting time.
+ */
+const SCHEDULING_KEYWORDS = [
+  "available", "availability", "free", "busy", "hold",
+  "shoot", "filming", "film", "record", "production", "on set", "set day",
+  "book", "booking", "schedule", "scheduled", "reschedule",
+  "meeting", "call", "sync", "check-in",
+  "deadline", "deliver", "delivery", "due",
+  "arrive", "arrival", "fly", "travel", "location",
+  "confirm", "confirmation", "tentative", "prelim",
+  "can we", "are you", "is that", "would you", "could you",
+  "works for you", "work for you", "good for you",
+  "looking at", "eyeing", "targeting", "hoping for",
+];
+
+/**
+ * Public US holidays that should NEVER be flagged as scheduling conflicts.
+ * Format: MM-DD (month and day only, year-agnostic).
+ */
+const US_HOLIDAYS = new Set([
+  "01-01", // New Year's Day
+  "07-04", // Independence Day
+  "11-11", // Veterans Day
+  "12-25", // Christmas
+  "12-24", // Christmas Eve
+  "12-31", // New Year's Eve
+  "11-28", "11-29", // Thanksgiving (approx — Thu + Fri)
+  "05-26", "05-25", "05-27", // Memorial Day weekend (approx)
+  "09-01", "09-02", // Labor Day (approx)
+]);
+
+function isPublicHoliday(date: Date): boolean {
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return US_HOLIDAYS.has(`${mm}-${dd}`);
+}
+
+/** Returns true if the surrounding text suggests the date is scheduling-related */
+function hasSchedulingContext(context: string): boolean {
+  const lower = context.toLowerCase();
+  return SCHEDULING_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
 /** Client-side date extraction (regex-based, instant) */
 function extractDatesFromText(
   text: string
 ): Array<{ raw: string; date: Date; context: string }> {
   const results: Array<{ raw: string; date: Date; context: string }> = [];
   const now = new Date();
+  const seen = new Set<string>();
 
   const re1 =
     /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?\b/gi;
@@ -84,11 +131,13 @@ function extractDatesFromText(
   while ((match = re1.exec(text)) !== null) {
     const year = match[3] ? parseInt(match[3]) : now.getFullYear();
     const date = new Date(`${match[1]} ${match[2]}, ${year}`);
-    if (!isNaN(date.getTime())) {
+    const key = date.toISOString().split("T")[0];
+    if (!isNaN(date.getTime()) && !seen.has(key)) {
+      seen.add(key);
       results.push({
         raw: match[0],
         date,
-        context: text.slice(Math.max(0, match.index - 40), match.index + 60),
+        context: text.slice(Math.max(0, match.index - 60), match.index + 80),
       });
     }
   }
@@ -96,11 +145,13 @@ function extractDatesFromText(
   const re2 = /\b(\d{4})-(\d{2})-(\d{2})\b/g;
   while ((match = re2.exec(text)) !== null) {
     const date = new Date(match[0]);
-    if (!isNaN(date.getTime())) {
+    const key = date.toISOString().split("T")[0];
+    if (!isNaN(date.getTime()) && !seen.has(key)) {
+      seen.add(key);
       results.push({
         raw: match[0],
         date,
-        context: text.slice(Math.max(0, match.index - 40), match.index + 60),
+        context: text.slice(Math.max(0, match.index - 60), match.index + 80),
       });
     }
   }
@@ -110,11 +161,13 @@ function extractDatesFromText(
     const yr =
       match[3].length === 2 ? 2000 + parseInt(match[3]) : parseInt(match[3]);
     const date = new Date(yr, parseInt(match[1]) - 1, parseInt(match[2]));
-    if (!isNaN(date.getTime())) {
+    const key = date.toISOString().split("T")[0];
+    if (!isNaN(date.getTime()) && !seen.has(key)) {
+      seen.add(key);
       results.push({
         raw: match[0],
         date,
-        context: text.slice(Math.max(0, match.index - 40), match.index + 60),
+        context: text.slice(Math.max(0, match.index - 60), match.index + 80),
       });
     }
   }
@@ -123,9 +176,13 @@ function extractDatesFromText(
 }
 
 /**
- * Only flag conflicts when a date in the email overlaps with an ACTIVE phase
- * (status: "active" or "in_progress"). Ignores task due dates — a task due on
- * a date doesn't mean the date is unavailable.
+ * Only flag conflicts when:
+ * 1. The date appears in a scheduling context (not just any date mention)
+ * 2. It's not a recognized public holiday
+ * 3. It overlaps with an ACTIVE project phase (not just a task due date)
+ *
+ * A date conflict means: someone is proposing to schedule something on a day
+ * you already have an active production phase committed.
  */
 function checkConflicts(
   extractedDates: Array<{ raw: string; date: Date; context: string }>,
@@ -134,7 +191,12 @@ function checkConflicts(
   const conflicts: DateConflict[] = [];
   const activeStatuses = new Set(["active", "in_progress", "in-progress"]);
 
-  for (const { raw, date, context } of extractedDates) {
+  // Only consider dates that appear in a scheduling context
+  const schedulingDates = extractedDates.filter(
+    (d) => hasSchedulingContext(d.context) && !isPublicHoliday(d.date)
+  );
+
+  for (const { raw, date, context } of schedulingDates) {
     for (const phase of phases) {
       if (!phase.start_date) continue;
       if (!activeStatuses.has(phase.status)) continue;
@@ -174,6 +236,7 @@ export function EmailClient({
   const [emails, setEmails] = useState(initialEmails);
   const [taskSuggestions, setTaskSuggestions] = useState(initialTaskSuggestions);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [activeFolder, setActiveFolder] = useState<"inbox" | "sent">("inbox");
   const [mobileView, setMobileView] = useState<"list" | "thread">("list");
   const [newEmailOpen, setNewEmailOpen] = useState(false);
   const assistantActionApplied = useRef(false);
@@ -479,72 +542,83 @@ export function EmailClient({
   return (
     <>
       <div className="flex h-full overflow-hidden">
-        {/* ── Email list ── */}
+        {/* ── Email list panel ──
+            Full-width by default; shrinks to sidebar when a thread is selected.
+            Hidden on mobile when viewing a thread. */}
         <div
           className={cn(
-            "shrink-0 overflow-hidden flex flex-col",
-            "w-full md:w-72",
-            mobileView !== "list" ? "hidden md:flex" : "flex"
+            "overflow-hidden flex flex-col transition-all duration-200",
+            mobileView === "thread" && "hidden md:flex",
+            selectedThreadId
+              ? "md:w-80 lg:w-96 shrink-0 border-r border-border"
+              : "flex-1"
           )}
         >
           <EmailListPanel
-            emails={emails}
-            selectedThreadId={selectedThreadId}
-            taskSuggestions={taskSuggestions}
-            projects={projects}
-            isSyncing={isSyncing}
-            search={search}
-            onSearchChange={setSearch}
-            onSelectThread={handleSelectThread}
-            onSync={handleSync}
-            onApproveTask={handleApproveTask}
-            onDismissTask={handleDismissTask}
-            onCompose={() => setNewEmailOpen(true)}
-          />
-        </div>
-
-        {/* ── Thread view (full width, compose inline) ── */}
-        <div
-          className={cn(
-            "flex-1 min-w-0 overflow-hidden flex-col",
-            mobileView === "thread" ? "flex" : "hidden md:flex"
-          )}
-        >
-          {/* Mobile back button */}
-          <div className="md:hidden flex items-center gap-2 px-4 h-11 border-b border-border shrink-0 bg-background/80 backdrop-blur-sm">
-            <button
-              onClick={() => {
+              emails={emails}
+              selectedThreadId={selectedThreadId}
+              taskSuggestions={taskSuggestions}
+              projects={projects}
+              isSyncing={isSyncing}
+              search={search}
+              activeFolder={activeFolder}
+              onFolderChange={(folder) => {
+                setActiveFolder(folder);
                 setSelectedThreadId(null);
-                setMobileView("list");
               }}
-              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <ChevronLeft className="w-4 h-4" />
-              Inbox
-            </button>
-          </div>
-
-          <EmailThreadPanel
-            messages={threadMessages}
-            dateConflicts={visibleConflicts}
-            mentionedDates={mentionedDates}
-            phaseSignal={visiblePhaseSignal}
-            calendarConnected={calendarConnected}
-            projects={projects}
-            phases={phases}
-            tasks={tasks}
-            hasToneProfile={hasToneProfile}
-            userEmail={userEmail}
-            onDismissConflicts={() => setConflictsDismissed(true)}
-            onDismissPhaseSignal={() => setPhaseSignalDismissed(true)}
-            onPhaseAction={handlePhaseAction}
-            onCreateCalendarEvent={handleCreateCalendarEvent}
-            onPhaseSignal={(signal) => {
-              setPhaseSignal(signal);
-              setPhaseSignalDismissed(false);
-            }}
-          />
+              onSearchChange={setSearch}
+              onSelectThread={handleSelectThread}
+              onSync={handleSync}
+              onApproveTask={handleApproveTask}
+              onDismissTask={handleDismissTask}
+              onCompose={() => setNewEmailOpen(true)}
+            />
         </div>
+
+        {/* ── Thread view ── */}
+        {selectedThreadId && (
+          <div
+            className={cn(
+              "flex-1 min-w-0 overflow-hidden flex-col",
+              mobileView === "thread" ? "flex" : "hidden md:flex"
+            )}
+          >
+            {/* Back button (mobile + desktop when list is hidden) */}
+            <div className="flex items-center gap-2 px-4 h-11 border-b border-border shrink-0 bg-background/80 backdrop-blur-sm md:hidden">
+              <button
+                onClick={() => {
+                  setSelectedThreadId(null);
+                  setMobileView("list");
+                }}
+                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                {activeFolder === "sent" ? "Sent" : "Inbox"}
+              </button>
+            </div>
+
+            <EmailThreadPanel
+              messages={threadMessages}
+              dateConflicts={visibleConflicts}
+              mentionedDates={mentionedDates}
+              phaseSignal={visiblePhaseSignal}
+              calendarConnected={calendarConnected}
+              projects={projects}
+              phases={phases}
+              tasks={tasks}
+              hasToneProfile={hasToneProfile}
+              userEmail={userEmail}
+              onDismissConflicts={() => setConflictsDismissed(true)}
+              onDismissPhaseSignal={() => setPhaseSignalDismissed(true)}
+              onPhaseAction={handlePhaseAction}
+              onCreateCalendarEvent={handleCreateCalendarEvent}
+              onPhaseSignal={(signal) => {
+                setPhaseSignal(signal);
+                setPhaseSignalDismissed(false);
+              }}
+            />
+          </div>
+        )}
       </div>
 
       {/* ── New email modal ── */}

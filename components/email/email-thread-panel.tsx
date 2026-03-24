@@ -12,6 +12,7 @@ import {
   ReplyAll,
   Forward,
   ArrowRight,
+  ChevronLeft,
 } from "lucide-react";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -235,13 +236,14 @@ function HtmlEmailFrame({ html }: { html: string }) {
   const srcDoc = `<!DOCTYPE html>
 <html><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<base target="_blank">
 ${heightScript}
 <style>
   *{box-sizing:border-box}
   html,body{margin:0;padding:0}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;line-height:1.6;color:#111827;background:#fff;word-break:break-word;overflow-x:hidden}
   img{max-width:100%;height:auto}
-  a{color:#3b82f6;text-decoration:underline}
+  a{color:#3b82f6;text-decoration:underline;cursor:pointer}
   pre,code{white-space:pre-wrap;word-break:break-word;font-size:12px}
   blockquote{border-left:3px solid #e5e7eb;margin:8px 0;padding-left:12px;color:#6b7280}
   table{border-collapse:collapse;max-width:100%}
@@ -251,6 +253,8 @@ ${heightScript}
   ul,ol{padding-left:20px;margin:6px 0}
   .gmail_quote,.moz-cite-prefix{color:#6b7280;font-size:12px}
   [style*="display:none"],[style*="display: none"]{display:none!important}
+  /* Ensure all links are clearly interactive */
+  a:hover{opacity:0.8}
 </style>
 </head><body>${html}</body></html>`;
 
@@ -258,7 +262,7 @@ ${heightScript}
     <iframe
       ref={iframeRef}
       srcDoc={srcDoc}
-      sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+      sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-same-origin"
       className="w-full border-0 block"
       style={{ height }}
       title="Email content"
@@ -494,6 +498,7 @@ export function EmailThreadPanel({
   const [composeOpen, setComposeOpen] = useState(false);
   const [replyMode, setReplyMode] = useState<ReplyMode>("reply");
   const [activeCalendarDate, setActiveCalendarDate] = useState<string | null>(null);
+  const [calendarDatesOpen, setCalendarDatesOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Scroll to bottom when thread loads
@@ -503,9 +508,11 @@ export function EmailThreadPanel({
     }
   }, [messages]);
 
-  // Close compose when thread changes
+  // Close compose and reset calendar state when thread changes
   useEffect(() => {
     setComposeOpen(false);
+    setCalendarDatesOpen(false);
+    setActiveCalendarDate(null);
   }, [messages[0]?.gmail_thread_id]);
 
   if (!messages.length) {
@@ -629,7 +636,7 @@ export function EmailThreadPanel({
           </motion.div>
         )}
 
-        {/* Calendar dates — only when Google Calendar is connected */}
+        {/* Calendar dates — collapsed pill, expands on click */}
         {calendarConnected && calendarDates.length > 0 && (
           <motion.div
             key="calendar-dates"
@@ -639,57 +646,79 @@ export function EmailThreadPanel({
             transition={{ duration: 0.15 }}
             className="shrink-0 overflow-hidden"
           >
-            <div className="mx-4 mt-3 border border-border/60 bg-sidebar-accent/20 p-3">
-              <div className="flex items-center gap-2 mb-2">
-                <CalendarPlus className="w-3.5 h-3.5 text-muted-foreground/50" />
-                <p className="text-[11px] font-semibold text-muted-foreground/60 uppercase tracking-wider">
-                  Dates mentioned
-                </p>
-              </div>
-              <div className="space-y-2">
-                {calendarDates.map((d, i) => (
-                  <div key={i}>
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <span className="text-[11px] font-medium text-foreground/80">{d.raw}</span>
-                        {d.context && (
-                          <p className="text-[10px] text-muted-foreground/50 truncate max-w-[240px] mt-0.5">
-                            &ldquo;{d.context.trim()}&rdquo;
-                          </p>
-                        )}
-                      </div>
-                      <button
-                        onClick={() =>
-                          setActiveCalendarDate(
-                            activeCalendarDate === d.iso ? null : (d.iso ?? null)
-                          )
-                        }
-                        className={cn(
-                          "flex items-center gap-1 text-[10px] font-medium px-2 py-1 border shrink-0 transition-colors",
-                          activeCalendarDate === d.iso
-                            ? "bg-primary/10 border-primary/40 text-primary"
-                            : "border-border/50 text-muted-foreground/60 hover:border-primary/30 hover:text-primary"
-                        )}
-                      >
-                        <CalendarPlus className="w-3 h-3" />
-                        Add
-                      </button>
+            <div className="mx-4 mt-2">
+              {/* Collapsed pill trigger */}
+              <button
+                onClick={() => setCalendarDatesOpen((v) => !v)}
+                className={cn(
+                  "flex items-center gap-1.5 text-[10px] font-medium px-2.5 py-1 border transition-colors",
+                  calendarDatesOpen
+                    ? "bg-primary/10 border-primary/30 text-primary"
+                    : "border-border/50 text-muted-foreground/50 hover:border-border hover:text-muted-foreground bg-sidebar-accent/20"
+                )}
+              >
+                <CalendarPlus className="w-3 h-3" />
+                {calendarDates.length} date{calendarDates.length !== 1 ? "s" : ""} mentioned
+                <ChevronDown className={cn("w-2.5 h-2.5 transition-transform", calendarDatesOpen && "rotate-180")} />
+              </button>
+
+              {/* Expanded date list */}
+              <AnimatePresence>
+                {calendarDatesOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.15 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="mt-1.5 border border-border/60 bg-sidebar-accent/20 p-3 space-y-2">
+                      {calendarDates.map((d, i) => (
+                        <div key={i}>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <span className="text-[11px] font-medium text-foreground/80">{d.raw}</span>
+                              {d.context && (
+                                <p className="text-[10px] text-muted-foreground/50 truncate max-w-[200px] mt-0.5">
+                                  &ldquo;{d.context.trim()}&rdquo;
+                                </p>
+                              )}
+                            </div>
+                            <button
+                              onClick={() =>
+                                setActiveCalendarDate(
+                                  activeCalendarDate === d.iso ? null : (d.iso ?? null)
+                                )
+                              }
+                              className={cn(
+                                "flex items-center gap-1 text-[10px] font-medium px-2 py-1 border shrink-0 transition-colors",
+                                activeCalendarDate === d.iso
+                                  ? "bg-primary/10 border-primary/40 text-primary"
+                                  : "border-border/50 text-muted-foreground/60 hover:border-primary/30 hover:text-primary"
+                              )}
+                            >
+                              <CalendarPlus className="w-3 h-3" />
+                              Add
+                            </button>
+                          </div>
+                          <AnimatePresence>
+                            {activeCalendarDate === d.iso && (
+                              <CalendarEventForm
+                                date={d}
+                                defaultTitle={subject}
+                                onSubmit={(summary, isoDate) =>
+                                  onCreateCalendarEvent({ summary, date: isoDate })
+                                }
+                                onClose={() => setActiveCalendarDate(null)}
+                              />
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      ))}
                     </div>
-                    <AnimatePresence>
-                      {activeCalendarDate === d.iso && (
-                        <CalendarEventForm
-                          date={d}
-                          defaultTitle={subject}
-                          onSubmit={(summary, isoDate) =>
-                            onCreateCalendarEvent({ summary, date: isoDate })
-                          }
-                          onClose={() => setActiveCalendarDate(null)}
-                        />
-                      )}
-                    </AnimatePresence>
-                  </div>
-                ))}
-              </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </motion.div>
         )}
