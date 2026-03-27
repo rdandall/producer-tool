@@ -89,7 +89,8 @@ export async function POST(req: NextRequest) {
     const to = requireEmailList(body.to, "to", { required: true, maxItems: 25 });
     const cc = body.cc === undefined ? undefined : requireEmailList(body.cc, "cc", { required: false, maxItems: 25 });
     const subject = requireString(body.subject, "subject", { required: false, maxLength: 300 }) || "";
-    const emailBody = requireString(body.emailBody, "emailBody", { required: true, maxLength: 100000 });
+    const emailBody =
+      requireString(body.emailBody, "emailBody", { required: true, maxLength: 100000 }) || "";
     const scheduledAt = optionalDateIso(body.scheduledAt, "scheduledAt");
 
     const threadId = requireString(body.threadId, "threadId", { required: false, maxLength: 200 });
@@ -128,7 +129,7 @@ export async function POST(req: NextRequest) {
       getGmailSignature(token),
     ]);
 
-    let finalBody = emailBody;
+    let finalBody: string = emailBody;
     let finalIsHtml = isHtml;
 
     if (signature) {
