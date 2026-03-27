@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await parseJsonBody(req);
-    const rawInput = requireString(body.rawInput, "rawInput", { required: true, maxLength: 25000 });
+    const rawInput = requireString(body.rawInput, "rawInput", { required: true, maxLength: 25000 }) ?? "";
     const type = requireString(body.type, "type", { required: false, maxLength: 32 }) || "project-notes";
     const projectContext = body.projectContext;
 

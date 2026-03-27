@@ -38,7 +38,7 @@ function safeLinksForHtml(links: unknown): LinkInput[] {
         url: sanitizeUrl(url),
       };
     })
-    .filter((l): l is LinkInput => !!l.url && l.url !== "#");
+    .filter((l): l is LinkInput => !!l && !!l.url && l.url !== "#");
 }
 
 // ── Markdown → DOCX paragraphs ──────────────────────────────────────────────
@@ -162,7 +162,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await parseJsonBody(req);
-    const content = requireString(body.content, "content", { required: true, maxLength: MAX_CONTENT_LENGTH });
+    const content = requireString(body.content, "content", { required: true, maxLength: MAX_CONTENT_LENGTH }) ?? "";
     const titleRaw = body.title;
     const format = body.format;
     const formatStr = typeof format === "string" ? format : "";

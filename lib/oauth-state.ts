@@ -7,11 +7,7 @@ export interface OauthStateRecord {
   expiresAt: number;
 }
 
-const randomState = () => {
-  const entropy = crypto.randomUUID();
-  const fallback = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  return (crypto.randomUUID ? entropy : fallback);
-};
+const randomState = () => crypto.randomUUID();
 
 export async function createOauthState(provider: string): Promise<string> {
   const state = randomState();

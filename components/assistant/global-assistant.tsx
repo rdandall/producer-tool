@@ -225,9 +225,7 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
     setIsExecuting(true);
 
     try {
-      const intent = action.intent as AssistantIntent;
-
-      switch (intent) {
+      switch (action.intent) {
         case "create_task": {
           const { title, project_id, due_date, priority } = action.action_params;
           await createTaskDirectAction({
