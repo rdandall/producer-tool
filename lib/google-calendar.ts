@@ -26,7 +26,7 @@ export interface GoogleCalendar {
 // ── OAuth helpers ────────────────────────────────────────────────────
 
 /** Build the Google OAuth consent screen URL. */
-export function getGoogleAuthUrl(redirectUri: string): string {
+export function getGoogleAuthUrl(redirectUri: string, state?: string): string {
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID!,
     redirect_uri: redirectUri,
@@ -38,6 +38,7 @@ export function getGoogleAuthUrl(redirectUri: string): string {
     access_type: "offline",
     prompt: "consent", // force refresh_token to always be returned
   });
+  if (state) params.set("state", state);
   return `${GOOGLE_OAUTH_URL}?${params}`;
 }
 

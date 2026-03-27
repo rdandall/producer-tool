@@ -135,21 +135,35 @@ export async function replaceEventsForSource(sourceId: string, events: Array<{
   raw: unknown;
 }>) {
   const supabase = await createClient();
+  const remoteIds = events.map((event) => event.google_event_id);
+  if (!events.length) {
+    const { error: deleteError } = await supabase
+      .from("calendar_events")
+      .delete()
+      .eq("source_id", sourceId);
+    if (deleteError) throw new Error(deleteError.message);
+    return;
+  }
 
-  const { error: deleteError } = await supabase
+  const { error: upsertError } = await supabase
+    .from("calendar_events")
+    .upsert(
+      events.map((e) => ({
+        ...e,
+        source_id: sourceId,
+      })),
+      { onConflict: "source_id,google_event_id" }
+    );
+
+  if (upsertError) throw new Error(upsertError.message);
+
+  const { error: removeError } = await supabase
     .from("calendar_events")
     .delete()
-    .eq("source_id", sourceId);
+    .eq("source_id", sourceId)
+    .not("google_event_id", "in", `(${remoteIds.map((id) => `'${id.replace(/'/g, \"''\")}'`).join(",") || "''"})`);
 
-  if (deleteError) throw new Error(deleteError.message);
-
-  if (!events.length) return;
-
-  const { error: insertError } = await supabase
-    .from("calendar_events")
-    .insert(events.map((e) => ({ ...e, source_id: sourceId })));
-
-  if (insertError) throw new Error(insertError.message);
+  if (removeError) throw new Error(removeError.message);
 }
 
 export async function getCalendarPageData() {

@@ -1,9 +1,49 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  Document, Packer, Paragraph, TextRun, HeadingLevel,
-  AlignmentType, BorderStyle, TableRow, TableCell, Table,
-  WidthType,
+  Document,
+  Packer,
+  Paragraph,
+  TextRun,
+  HeadingLevel,
+  AlignmentType,
+  BorderStyle,
 } from "docx";
+import {
+  checkRateLimit,
+  ValidationError,
+  parseJsonBody,
+  requireString,
+} from "@/lib/validation";
+import { renderSimpleMarkdownToHtml, sanitizeUrl, escapeHtml, plainTextToHtml } from "@/lib/markdown";
+
+interface LinkInput {
+  label: string;
+  url: string;
+}
+
+const MAX_CONTENT_LENGTH = 120000;
+const MAX_TITLE_LENGTH = 200;
+
+function toSafeTitle(value: unknown, fallback: string) {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, MAX_TITLE_LENGTH) : fallback;
+}
+
+function safeLinksForHtml(links: unknown): LinkInput[] {
+  if (!Array.isArray(links)) return [];
+  return links
+    .map((link) => {
+      if (!link || typeof link !== "object") return null;
+      const label = typeof (link as { label?: unknown }).label === "string" ? (link as { label?: string }).label! : "";
+      const url = typeof (link as { url?: unknown }).url === "string" ? (link as { url?: string }).url! : "";
+      return {
+        label: label.slice(0, 160).trim(),
+        url: sanitizeUrl(url),
+      };
+    })
+    .filter((l): l is LinkInput => !!l.url && l.url !== "#");
+}
 
 // ── Markdown → DOCX paragraphs ──────────────────────────────────────────────
 function markdownToDocxParagraphs(markdown: string): Paragraph[] {
@@ -13,7 +53,6 @@ function markdownToDocxParagraphs(markdown: string): Paragraph[] {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // H1
     if (line.startsWith("# ")) {
       paragraphs.push(
         new Paragraph({
@@ -25,7 +64,6 @@ function markdownToDocxParagraphs(markdown: string): Paragraph[] {
       continue;
     }
 
-    // H2
     if (line.startsWith("## ")) {
       paragraphs.push(
         new Paragraph({
@@ -37,7 +75,6 @@ function markdownToDocxParagraphs(markdown: string): Paragraph[] {
       continue;
     }
 
-    // H3
     if (line.startsWith("### ")) {
       paragraphs.push(
         new Paragraph({
@@ -49,7 +86,6 @@ function markdownToDocxParagraphs(markdown: string): Paragraph[] {
       continue;
     }
 
-    // Bullet list
     if (line.startsWith("- ") || line.startsWith("* ")) {
       paragraphs.push(
         new Paragraph({
@@ -61,7 +97,6 @@ function markdownToDocxParagraphs(markdown: string): Paragraph[] {
       continue;
     }
 
-    // Italic (leading *)
     if (line.startsWith("*") && line.endsWith("*") && line.length > 2) {
       paragraphs.push(
         new Paragraph({
@@ -72,9 +107,23 @@ function markdownToDocxParagraphs(markdown: string): Paragraph[] {
       continue;
     }
 
-    // Bold (**text**)
     const boldText = line.replace(/\*\*(.*?)\*\*/g, (_, t) => t);
     const hasBold = line.includes("**");
+
+    if (line === "---" || line === "***" || line === "___") {
+      paragraphs.push(
+        new Paragraph({
+          border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "CCCCCC" } },
+          spacing: { before: 200, after: 200 },
+        })
+      );
+      continue;
+    }
+
+    if (line.trim() === "") {
+      paragraphs.push(new Paragraph({ text: "", spacing: { after: 80 } }));
+      continue;
+    }
 
     if (hasBold) {
       const runs: TextRun[] = [];
@@ -86,30 +135,10 @@ function markdownToDocxParagraphs(markdown: string): Paragraph[] {
           runs.push(new TextRun({ text: part }));
         }
       }
-      paragraphs.push(
-        new Paragraph({ children: runs, spacing: { after: 80 } })
-      );
+      paragraphs.push(new Paragraph({ children: runs, spacing: { after: 80 } }));
       continue;
     }
 
-    // Horizontal rule
-    if (line === "---" || line === "***" || line === "___") {
-      paragraphs.push(
-        new Paragraph({
-          border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "CCCCCC" } },
-          spacing: { before: 200, after: 200 },
-        })
-      );
-      continue;
-    }
-
-    // Empty line
-    if (line.trim() === "") {
-      paragraphs.push(new Paragraph({ text: "", spacing: { after: 80 } }));
-      continue;
-    }
-
-    // Normal paragraph
     paragraphs.push(
       new Paragraph({
         children: [new TextRun({ text: boldText })],
@@ -121,77 +150,58 @@ function markdownToDocxParagraphs(markdown: string): Paragraph[] {
   return paragraphs;
 }
 
-// ── Markdown → clean HTML for PDF ───────────────────────────────────────────
-function markdownToHtml(markdown: string): string {
-  let html = markdown
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-
-  // Process line by line for headings and lists
-  const lines = html.split("\n");
-  const output: string[] = [];
-  let inList = false;
-
-  for (const line of lines) {
-    if (line.startsWith("# ")) {
-      if (inList) { output.push("</ul>"); inList = false; }
-      output.push(`<h1>${line.slice(2)}</h1>`);
-    } else if (line.startsWith("## ")) {
-      if (inList) { output.push("</ul>"); inList = false; }
-      output.push(`<h2>${line.slice(3)}</h2>`);
-    } else if (line.startsWith("### ")) {
-      if (inList) { output.push("</ul>"); inList = false; }
-      output.push(`<h3>${line.slice(4)}</h3>`);
-    } else if (line.startsWith("- ") || line.startsWith("* ")) {
-      if (!inList) { output.push("<ul>"); inList = true; }
-      output.push(`<li>${formatInline(line.slice(2))}</li>`);
-    } else if (line.trim() === "" || line === "---") {
-      if (inList) { output.push("</ul>"); inList = false; }
-      if (line === "---") {
-        output.push("<hr>");
-      } else {
-        output.push("<br>");
-      }
-    } else {
-      if (inList) { output.push("</ul>"); inList = false; }
-      output.push(`<p>${formatInline(line)}</p>`);
-    }
-  }
-
-  if (inList) output.push("</ul>");
-  return output.join("\n");
-}
-
-function formatInline(text: string): string {
-  return text
-    .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.*?)\*/g, "<em>$1</em>")
-    .replace(/`(.*?)`/g, "<code>$1</code>");
+function htmlFromMarkdown(markdown: string): string {
+  return renderSimpleMarkdownToHtml(markdown);
 }
 
 // ── Route ────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
-    const { content, title, format, links } = await req.json();
-
-    if (!content) {
-      return NextResponse.json({ error: "No content provided" }, { status: 400 });
+    const rate = checkRateLimit(req, "notes.export", 20, 60_000);
+    if (!rate.ok) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded", retryAfter: rate.retryAfterSec },
+        { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } }
+      );
     }
 
-    // ── PDF: return styled HTML for browser print-to-PDF ──────────────────
-    if (format === "pdf") {
-      const bodyHtml = markdownToHtml(content);
-      const linksHtml = links?.length
-        ? `<section class="links"><h2>Links &amp; References</h2><ul>${links.map((l: { label: string; url: string }) => `<li><a href="${l.url}">${l.label || l.url}</a></li>`).join("")}</ul></section>`
+    const body = await parseJsonBody(req);
+    const content = requireString(body.content, "content", { required: true, maxLength: MAX_CONTENT_LENGTH });
+    const titleRaw = body.title;
+    const format = body.format;
+    const formatStr = typeof format === "string" ? format : "";
+
+    if (!formatStr) {
+      return NextResponse.json({ error: "Missing format" }, { status: 400 });
+    }
+
+    if (formatStr !== "pdf" && formatStr !== "docx") {
+      return NextResponse.json({ error: "Invalid format" }, { status: 400 });
+    }
+
+    const title = toSafeTitle(titleRaw, "Document");
+    const safeFilename = title.replace(/[^a-z0-9]/gi, "-").toLowerCase() || "document";
+    const links = safeLinksForHtml(body.links);
+
+    if (formatStr === "pdf") {
+      const bodyHtml = htmlFromMarkdown(content);
+      const linksHtml = links.length
+        ? `<section class="links"><h2>Links &amp; References</h2><ul>${links
+            .map((l) => `<li><a href="${l.url}">${l.label || l.url}</a></li>`)
+            .join("")}</ul></section>`
         : "";
+      const generatedAt = plainTextToHtml(new Date().toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      }));
 
       const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${title ?? "Document"}</title>
+  <title>${escapeHtml(title)}</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -264,109 +274,107 @@ export async function POST(req: NextRequest) {
 <body>
   ${bodyHtml}
   ${linksHtml}
-  <div class="footer">Generated by PRDCR &middot; ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</div>
+  <div class="footer">Generated by PRDCR &middot; ${generatedAt}</div>
 </body>
 </html>`;
 
       return new NextResponse(html, {
         headers: {
           "Content-Type": "text/html; charset=utf-8",
-          "Content-Disposition": `attachment; filename="${(title ?? "document").replace(/[^a-z0-9]/gi, "-")}.html"`,
+          "Content-Disposition": `attachment; filename="${safeFilename}.html"`,
         },
       });
     }
 
-    // ── DOCX ──────────────────────────────────────────────────────────────
-    if (format === "docx") {
-      const contentParagraphs = markdownToDocxParagraphs(content);
+    const contentParagraphs = markdownToDocxParagraphs(content);
 
-      // Append links section if present
-      if (links?.length) {
-        contentParagraphs.push(
-          new Paragraph({
-            text: "",
-            spacing: { before: 400 },
-            border: { top: { style: BorderStyle.SINGLE, size: 4, color: "CCCCCC" } },
-          }),
-          new Paragraph({
-            text: "Links & References",
-            heading: HeadingLevel.HEADING_2,
-            spacing: { before: 200, after: 120 },
-          }),
-          ...links.map(
-            (l: { label: string; url: string }) =>
-              new Paragraph({
-                bullet: { level: 0 },
-                children: [
-                  new TextRun({ text: l.label ? `${l.label}: ` : "", bold: !!l.label }),
-                  new TextRun({ text: l.url, color: "2563EB" }),
-                ],
-                spacing: { after: 60 },
-              })
-          )
-        );
-      }
-
-      // Footer
+    if (links.length) {
       contentParagraphs.push(
         new Paragraph({
           text: "",
-          spacing: { before: 600 },
-          border: { top: { style: BorderStyle.SINGLE, size: 4, color: "EEEEEE" } },
+          spacing: { before: 400 },
+          border: { top: { style: BorderStyle.SINGLE, size: 4, color: "CCCCCC" } },
         }),
         new Paragraph({
-          alignment: AlignmentType.CENTER,
-          children: [
-            new TextRun({
-              text: `Generated by PRDCR · ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`,
-              color: "AAAAAA",
-              size: 16,
-            }),
-          ],
-        })
+          text: "Links & References",
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 200, after: 120 },
+        }),
+        ...links.map(
+          (l) =>
+            new Paragraph({
+              bullet: { level: 0 },
+              children: [
+                new TextRun({ text: l.label ? `${l.label}: ` : "", bold: !!l.label }),
+                new TextRun({ text: l.url, color: "2563EB" }),
+              ],
+              spacing: { after: 60 },
+            })
+        )
       );
-
-      const doc = new Document({
-        creator: "PRDCR",
-        title: title ?? "Document",
-        sections: [
-          {
-            properties: {
-              page: {
-                margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
-              },
-            },
-            children: contentParagraphs,
-          },
-        ],
-        styles: {
-          default: {
-            document: {
-              run: { font: "Calibri", size: 22 },
-              paragraph: { spacing: { line: 360 } },
-            },
-          },
-        },
-      });
-
-      const buffer = await Packer.toBuffer(doc);
-      const safeTitle = (title ?? "document").replace(/[^a-z0-9]/gi, "-");
-
-      return new NextResponse(new Uint8Array(buffer), {
-        headers: {
-          "Content-Type":
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          "Content-Disposition": `attachment; filename="${safeTitle}.docx"`,
-        },
-      });
     }
 
-    return NextResponse.json({ error: "Invalid format" }, { status: 400 });
+    const generatedAt = plainTextToHtml(new Date().toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    }));
+
+    contentParagraphs.push(
+      new Paragraph({
+        text: "",
+        spacing: { before: 600 },
+        border: { top: { style: BorderStyle.SINGLE, size: 4, color: "EEEEEE" } },
+      }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [
+          new TextRun({
+            text: `Generated by PRDCR · ${generatedAt}`,
+            color: "AAAAAA",
+            size: 16,
+          }),
+        ],
+      })
+    );
+
+    const doc = new Document({
+      creator: "PRDCR",
+      title,
+      sections: [
+        {
+          properties: {
+            page: {
+              margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
+            },
+          },
+          children: contentParagraphs,
+        },
+      ],
+      styles: {
+        default: {
+          document: {
+            run: { font: "Calibri", size: 22 },
+            paragraph: { spacing: { line: 360 } },
+          },
+        },
+      },
+    });
+
+    const buffer = await Packer.toBuffer(doc);
+    return new NextResponse(new Uint8Array(buffer), {
+      headers: {
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "Content-Disposition": `attachment; filename="${safeFilename}.docx"`,
+      },
+    });
   } catch (err) {
+    const status = err instanceof ValidationError ? err.statusCode : 500;
     console.error("notes/export error:", err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Export failed" },
-      { status: 500 }
+      { status }
     );
   }
 }

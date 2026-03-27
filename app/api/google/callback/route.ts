@@ -2,13 +2,20 @@ import { NextResponse } from "next/server";
 import { google } from "googleapis";
 import { getGoogleOauthClient } from "@/lib/google";
 import { upsertGoogleConnection } from "@/lib/db/calendar";
+import { consumeOauthState } from "@/lib/oauth-state";
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
 
   if (!code) {
     return NextResponse.redirect(`${url.origin}/dashboard/calendar?error=missing_code`);
+  }
+
+  const stateOk = await consumeOauthState("google-calendar-legacy", state);
+  if (!stateOk) {
+    return NextResponse.redirect(`${url.origin}/dashboard/calendar?error=invalid_oauth_state`);
   }
 
   try {

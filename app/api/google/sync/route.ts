@@ -7,8 +7,17 @@ import {
   upsertGoogleConnection,
 } from "@/lib/db/calendar";
 import { getGoogleOauthClient } from "@/lib/google";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: Request) {
+  const rate = checkRateLimit(req, "google.sync", 20, 60_000);
+  if (!rate.ok) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded", retryAfter: rate.retryAfterSec },
+      { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } }
+    );
+  }
+
   const url = new URL(req.url);
 
   try {
@@ -46,6 +55,8 @@ export async function POST(req: Request) {
     const timeMax = new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString();
 
     let totalEvents = 0;
+    const skipped: string[] = [];
+    const syncErrors: Array<{ calendarId: string; error: string }> = [];
 
     for (const cal of list) {
       if (!cal.id) continue;
@@ -58,45 +69,62 @@ export async function POST(req: Request) {
         selected: true,
       });
 
-      const eventsRes = await calendar.events.list({
-        calendarId: cal.id,
-        singleEvents: true,
-        orderBy: "startTime",
-        timeMin,
-        timeMax,
-        maxResults: 500,
-      });
-
-      const mappedEvents = (eventsRes.data.items ?? [])
-        .filter((e) => e.id && e.start && e.end)
-        .map((event) => {
-          const allDay = !!event.start?.date;
-          const start = event.start?.dateTime || event.start?.date;
-          const end = event.end?.dateTime || event.end?.date;
-
-          return {
-            google_event_id: event.id!,
-            status: event.status ?? null,
-            summary: event.summary ?? null,
-            description: event.description ?? null,
-            location: event.location ?? null,
-            starts_at: start ? new Date(start).toISOString() : new Date().toISOString(),
-            ends_at: end ? new Date(end).toISOString() : new Date().toISOString(),
-            all_day: allDay,
-            html_link: event.htmlLink ?? null,
-            organizer_email: event.organizer?.email ?? null,
-            updated_at_google: event.updated ? new Date(event.updated).toISOString() : null,
-            raw: event,
-          };
+      try {
+        const eventsRes = await calendar.events.list({
+          calendarId: cal.id,
+          singleEvents: true,
+          orderBy: "startTime",
+          timeMin,
+          timeMax,
+          maxResults: 500,
         });
 
-      await replaceEventsForSource(source.id, mappedEvents);
-      totalEvents += mappedEvents.length;
+        const mappedEvents = (eventsRes.data.items ?? [])
+          .filter((e) => e.id && e.start && e.end)
+          .map((event) => {
+            const allDay = !!event.start?.date;
+            const start = event.start?.dateTime || event.start?.date;
+            const end = event.end?.dateTime || event.end?.date;
+
+            return {
+              google_event_id: event.id!,
+              status: event.status ?? null,
+              summary: event.summary ?? null,
+              description: event.description ?? null,
+              location: event.location ?? null,
+              starts_at: start ? new Date(start).toISOString() : new Date().toISOString(),
+              ends_at: end ? new Date(end).toISOString() : new Date().toISOString(),
+              all_day: allDay,
+              html_link: event.htmlLink ?? null,
+              organizer_email: event.organizer?.email ?? null,
+              updated_at_google: event.updated ? new Date(event.updated).toISOString() : null,
+              raw: event,
+            };
+          });
+
+        await replaceEventsForSource(source.id, mappedEvents);
+        totalEvents += mappedEvents.length;
+      } catch (error) {
+        skipped.push(cal.id);
+        syncErrors.push({
+          calendarId: cal.id,
+          error: error instanceof Error ? error.message : "Calendar sync failed",
+        });
+      }
     }
 
-    return NextResponse.json({ ok: true, calendars: list.length, events: totalEvents });
+    return NextResponse.json({
+      ok: true,
+      calendars: list.length - skipped.length,
+      failedCalendars: skipped.length ? skipped : undefined,
+      syncErrors: syncErrors.length ? syncErrors : undefined,
+      events: totalEvents,
+    });
   } catch (error) {
     console.error("google sync:", error);
-    return NextResponse.json({ error: "Failed to sync Google Calendar" }, { status: 500 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Failed to sync Google Calendar" },
+      { status: 500 }
+    );
   }
 }

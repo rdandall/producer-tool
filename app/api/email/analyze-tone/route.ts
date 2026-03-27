@@ -2,10 +2,19 @@ import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { getValidGmailToken, searchSentEmails } from "@/lib/gmail";
 import { setSetting } from "@/lib/db/settings";
+import { checkRateLimit } from "@/lib/rate-limit";
 
-const anthropic = new Anthropic();
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 export async function POST() {
+  const rate = checkRateLimit(new Request("/api/email/analyze-tone"), "email.analyzeTone", 6, 60_000);
+  if (!rate.ok) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded", retryAfter: rate.retryAfterSec },
+      { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } }
+    );
+  }
+
   const token = await getValidGmailToken();
   if (!token) {
     return NextResponse.json({ error: "Not connected to Gmail" }, { status: 401 });
@@ -22,7 +31,6 @@ export async function POST() {
       );
     }
 
-    // Build a representative sample (max 50 emails, truncated for token budget)
     const sample = substantive
       .slice(0, 50)
       .map((e) => `SUBJECT: ${e.subject}\n\n${e.bodyText.slice(0, 600)}`)
@@ -51,8 +59,7 @@ ${sample}`,
       ],
     });
 
-    const profile =
-      message.content[0].type === "text" ? message.content[0].text : "";
+    const profile = message.content[0].type === "text" ? message.content[0].text : "";
 
     await Promise.all([
       setSetting("gmail_tone_profile", profile),

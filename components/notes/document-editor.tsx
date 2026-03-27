@@ -4,58 +4,12 @@ import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { Check, Edit3, Eye } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { renderSimpleMarkdownToHtml } from "@/lib/markdown";
 
 interface Props {
   content: string;
   onChange: (content: string) => void;
   isSaving: boolean;
-}
-
-// Minimal markdown → HTML renderer (display only)
-function renderMarkdown(md: string): string {
-  let html = md
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-
-  const lines = html.split("\n");
-  const output: string[] = [];
-  let inList = false;
-
-  for (const line of lines) {
-    if (line.startsWith("# ")) {
-      if (inList) { output.push("</ul>"); inList = false; }
-      output.push(`<h1>${line.slice(2)}</h1>`);
-    } else if (line.startsWith("## ")) {
-      if (inList) { output.push("</ul>"); inList = false; }
-      output.push(`<h2>${line.slice(3)}</h2>`);
-    } else if (line.startsWith("### ")) {
-      if (inList) { output.push("</ul>"); inList = false; }
-      output.push(`<h3>${line.slice(4)}</h3>`);
-    } else if (line.startsWith("- ") || line.startsWith("* ")) {
-      if (!inList) { output.push("<ul>"); inList = true; }
-      const text = line.slice(2)
-        .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-        .replace(/\*(.*?)\*/g, "<em>$1</em>");
-      output.push(`<li>${text}</li>`);
-    } else if (line.trim() === "") {
-      if (inList) { output.push("</ul>"); inList = false; }
-      output.push(`<div class="spacer"></div>`);
-    } else if (line === "---") {
-      if (inList) { output.push("</ul>"); inList = false; }
-      output.push("<hr>");
-    } else {
-      if (inList) { output.push("</ul>"); inList = false; }
-      const text = line
-        .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-        .replace(/\*(.*?)\*/g, "<em>$1</em>")
-        .replace(/`(.*?)`/g, "<code>$1</code>");
-      output.push(`<p>${text}</p>`);
-    }
-  }
-
-  if (inList) output.push("</ul>");
-  return output.join("\n");
 }
 
 export function DocumentEditor({ content, onChange, isSaving }: Props) {
@@ -158,7 +112,7 @@ export function DocumentEditor({ content, onChange, isSaving }: Props) {
           <div
             className="prose-notes max-w-2xl cursor-text"
             onClick={switchToEdit}
-            dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
+            dangerouslySetInnerHTML={{ __html: renderSimpleMarkdownToHtml(content) }}
           />
         ) : (
           <textarea

@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { headers } from "next/headers";
 import { exchangeGmailCode } from "@/lib/gmail";
 import { setSetting } from "@/lib/db/settings";
+import { consumeOauthState } from "@/lib/oauth-state";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const code = searchParams.get("code");
   const error = searchParams.get("error");
+  const state = searchParams.get("state");
 
   const headersList = await headers();
   const host = headersList.get("host") ?? "localhost:3000";
@@ -16,6 +18,11 @@ export async function GET(req: NextRequest) {
 
   if (error || !code) {
     return NextResponse.redirect(`${origin}/dashboard/email?error=access_denied`);
+  }
+
+  const stateOk = await consumeOauthState("gmail-auth", state);
+  if (!stateOk) {
+    return NextResponse.redirect(`${origin}/dashboard/email?error=invalid_oauth_state`);
   }
 
   try {

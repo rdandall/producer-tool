@@ -4,6 +4,14 @@ import { getProjects } from "@/lib/db/projects";
 import { getAllEmails } from "@/lib/db/emails";
 import { getAllTasks } from "@/lib/db/tasks";
 import { createClient } from "@/lib/supabase/server";
+import {
+  normalizeAssistantAction,
+  type AssistantActionPayload,
+  type AssistantIntent,
+  ASSISTANT_INTENTS,
+} from "@/lib/assistant-contract";
+import { parseJsonBody, requireString, ValidationError } from "@/lib/validation";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -22,75 +30,85 @@ async function getUpcomingEvents() {
   }
 }
 
+function parseIntent(rawIntent: string): AssistantIntent {
+  return ASSISTANT_INTENTS.includes(rawIntent as AssistantIntent)
+    ? (rawIntent as AssistantIntent)
+    : "unknown";
+}
+
 export async function POST(req: NextRequest) {
-  const { transcript, page } = await req.json();
-
-  const today = new Date().toISOString().split("T")[0];
-
-  const [projects, allTasks, events, emails] = await Promise.all([
-    getProjects().catch(() => []),
-    getAllTasks().catch(() => []),
-    getUpcomingEvents(),
-    getAllEmails().catch(() => []),
-  ]);
-
-  const projectList = projects
-    .map((p) => {
-      const phases = (p.phases ?? [])
-        .map(
-          (ph: { name: string; status: string; start_date?: string | null; end_date?: string | null }) =>
-            `    • ${ph.name} [${ph.status}]${ph.start_date ? ` ${ph.start_date}${ph.end_date ? "→" + ph.end_date : ""}` : ""}`
-        )
-        .join("\n");
-      return `- "${p.title}"${p.client ? ` (client: ${p.client})` : ""} [status: ${p.status}] [id: ${p.id}]${
-        p.editor_name ? ` — editor: ${p.editor_name}` : ""
-      }${phases ? `\n  Phases:\n${phases}` : ""}`;
-    })
-    .join("\n");
-
-  const taskList = allTasks
-    .filter((t) => !t.completed)
-    .slice(0, 40)
-    .map(
-      (t) =>
-        `- "${t.title}"${t.due_date ? ` [due: ${t.due_date}]` : ""} [priority: ${t.priority}]${
-          t.projects ? ` [project: ${t.projects.title}]` : ""
-        }${t.assigned_to ? ` [assigned: ${t.assigned_to}]` : ""}`
-    )
-    .join("\n");
-
-  const eventList = events
-    .slice(0, 20)
-    .map(
-      (e: { summary?: string | null; starts_at: string; all_day?: boolean; location?: string | null }) =>
-        `- "${e.summary ?? "(no title)"}" on ${e.starts_at.split("T")[0]}${
-          !e.all_day ? ` at ${e.starts_at.split("T")[1]?.slice(0, 5)}` : ""
-        }${e.location ? ` @ ${e.location}` : ""}`
-    )
-    .join("\n");
-
-  let emailContext = "none available";
   try {
-    const threadMap = new Map<string, (typeof emails)[0]>();
-    for (const email of emails) {
-      if (!email.is_sent && email.gmail_thread_id && !threadMap.has(email.gmail_thread_id)) {
-        threadMap.set(email.gmail_thread_id, email);
-      }
+    const rate = checkRateLimit(req, "assistant", 50, 60_000);
+    if (!rate.ok) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded", retryAfter: rate.retryAfterSec },
+        { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } }
+      );
     }
-    const threads = Array.from(threadMap.values()).slice(0, 20);
-    if (threads.length > 0) {
-      emailContext = threads
-        .map(
-          (e) =>
-            `- thread_id: ${e.gmail_thread_id} | from: ${e.from_name ?? e.from_email} <${e.from_email}> | subject: "${e.subject}"`
-        )
-        .join("\n");
-    }
-  } catch {
-    // safe
-  }
 
-  const systemPrompt = `You are an executive assistant for PRDCR, a producer management tool for a freelance video producer. Parse commands OR answer questions using the context below.
+    const body = await parseJsonBody(req);
+    const transcript = requireString(body.transcript, "transcript", { required: true, maxLength: 3000 });
+    const page = requireString(body.page, "page", { required: false, maxLength: 80 }) || "Dashboard";
+
+    const today = new Date().toISOString().split("T")[0];
+
+    const [projects, allTasks, events, emails] = await Promise.all([
+      getProjects().catch(() => []),
+      getAllTasks().catch(() => []),
+      getUpcomingEvents(),
+      getAllEmails().catch(() => []),
+    ]);
+
+    const projectList = projects
+      .map((p) => {
+        const phases = (p.phases ?? [])
+          .map(
+            (ph: { name: string; status: string; start_date?: string | null; end_date?: string | null }) =>
+              `    • ${ph.name} [${ph.status}]${ph.start_date ? ` ${ph.start_date}${ph.end_date ? "→" + ph.end_date : ""}` : ""}`
+          )
+          .join("\n");
+        return `- "${p.title}"${p.client ? ` (client: ${p.client})` : ""} [id: ${p.id}]${p.editor_name ? ` — editor: ${p.editor_name}` : ""}${phases ? `\n  Phases:\n${phases}` : ""}`;
+      })
+      .join("\n");
+
+    const taskList = allTasks
+      .filter((t) => !t.completed)
+      .slice(0, 40)
+      .map(
+        (t) =>
+          `- "${t.title}"${t.due_date ? ` [due: ${t.due_date}]` : ""} [priority: ${t.priority}]${t.projects ? ` [project: ${t.projects.title}]` : ""}${t.assigned_to ? ` [assigned: ${t.assigned_to}]` : ""}`
+      )
+      .join("\n");
+
+    const eventList = events
+      .slice(0, 20)
+      .map(
+        (e: { summary?: string | null; starts_at: string; all_day?: boolean; location?: string | null }) =>
+          `- "${e.summary ?? "(no title)"}" on ${e.starts_at.split("T")[0]}${!e.all_day ? ` at ${e.starts_at.split("T")[1]?.slice(0, 5)}` : ""}${e.location ? ` @ ${e.location}` : ""}`
+      )
+      .join("\n");
+
+    let emailContext = "none available";
+    try {
+      const threadMap = new Map<string, (typeof emails)[0]>();
+      for (const email of emails) {
+        if (!email.is_sent && email.gmail_thread_id && !threadMap.has(email.gmail_thread_id)) {
+          threadMap.set(email.gmail_thread_id, email);
+        }
+      }
+      const threads = Array.from(threadMap.values()).slice(0, 20);
+      if (threads.length > 0) {
+        emailContext = threads
+          .map(
+            (e) => `- thread_id: ${e.gmail_thread_id} | from: ${e.from_name ?? e.from_email} <${e.from_email}> | subject: "${e.subject}"`
+          )
+          .join("\n");
+      }
+    } catch {
+      // safe
+    }
+
+    const systemPrompt = `You are an executive assistant for PRDCR, a producer management tool for a freelance video producer. Parse commands OR answer questions using the context below.
 
 Today: ${today}
 Current page: ${page}
@@ -132,26 +150,33 @@ RULES:
 - Dates: calculate from today (${today}). "Tomorrow" = ${new Date(Date.now() + 86400000).toISOString().split("T")[0]}, "next Monday" = calculate correctly
 - Keep summary short and specific. Be confident — always pick the most likely intent.`;
 
-  const msg = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 1024,
-    system: systemPrompt,
-    messages: [{ role: "user", content: transcript }],
-  });
-
-  const raw = msg.content[0].type === "text" ? msg.content[0].text : "{}";
-  const match = raw.match(/\{[\s\S]*\}/);
-
-  try {
-    const parsed = match
-      ? JSON.parse(match[0])
-      : { intent: "unknown", summary: "I couldn't understand that.", action_params: { message: raw } };
-    return NextResponse.json(parsed);
-  } catch {
-    return NextResponse.json({
-      intent: "unknown",
-      summary: "I couldn't parse that. Please try again.",
-      action_params: {},
+    const msg = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: [{ role: "user", content: transcript }],
     });
+
+    const raw = msg.content[0].type === "text" ? msg.content[0].text : "{}";
+    const match = raw.match(/\{[\s\S]*\}/);
+
+    const parsed = match ? JSON.parse(match[0]) : { intent: "unknown", summary: "I couldn't understand that.", action_params: {} };
+    const intent = parseIntent(parsed?.intent);
+    const normalized: AssistantActionPayload = normalizeAssistantAction({
+      ...parsed,
+      intent,
+      action_params: parsed?.action_params,
+    });
+
+    return NextResponse.json(normalized);
+  } catch (err) {
+    if (err instanceof ValidationError) {
+      return NextResponse.json({ error: err.message }, { status: err.statusCode });
+    }
+    const message = err instanceof Error ? err.message : "Failed to parse assistant intent";
+    return NextResponse.json(
+      { intent: "unknown", summary: message, action_params: { message } },
+      { status: 200 }
+    );
   }
 }

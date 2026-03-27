@@ -20,3 +20,8 @@ export async function setSetting(key: string, value: string): Promise<void> {
     updated_at: new Date().toISOString(),
   });
 }
+
+export async function deleteSetting(key: string): Promise<void> {
+  const supabase = await createClient();
+  await supabase.from("app_settings").delete().eq("key", key);
+}

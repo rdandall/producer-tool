@@ -17,15 +17,10 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { createTaskDirectAction } from "@/app/actions";
+import { type AssistantActionPayload, type AssistantIntent } from "@/lib/assistant-contract";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySpeechRecognition = any;
-
-interface AssistantAction {
-  intent: string;
-  summary: string;
-  action_params: Record<string, string>;
-}
 
 interface Project {
   id: string;
@@ -46,7 +41,7 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
   const [state, setState] = useState<AssistantState>("idle");
   const [transcript, setTranscript] = useState("");
   const [interimText, setInterimText] = useState("");
-  const [action, setAction] = useState<AssistantAction | null>(null);
+  const [action, setAction] = useState<AssistantActionPayload | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(false);
   const [showTextFallback, setShowTextFallback] = useState(false);
@@ -117,7 +112,7 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
         });
         if (!res.ok) throw new Error("API error");
         const data = await res.json();
-        setAction(data);
+        setAction(data as AssistantActionPayload);
         setState("confirming");
       } catch {
         toast.error("Assistant error — please try again");
@@ -230,7 +225,9 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
     setIsExecuting(true);
 
     try {
-      switch (action.intent) {
+      const intent = action.intent as AssistantIntent;
+
+      switch (intent) {
         case "create_task": {
           const { title, project_id, due_date, priority } = action.action_params;
           await createTaskDirectAction({
@@ -306,7 +303,7 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
           dismiss();
           break;
 
-        default:
+        case "unknown":
           toast.info("I couldn't complete that action. Try rephrasing.");
           dismiss();
       }
@@ -340,7 +337,7 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
     setTextInput("");
   }, [textInput, processTranscript]);
 
-  function getActionVerb(intent: string) {
+  function getActionVerb(intent: AssistantIntent) {
     switch (intent) {
       case "create_task":
         return "Create Task";
@@ -358,7 +355,7 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
     }
   }
 
-  function getActionIcon(intent: string) {
+  function getActionIcon(intent: AssistantIntent) {
     if (intent === "create_task") return <Check className="w-3.5 h-3.5" />;
     if (intent === "navigate") return <ArrowRight className="w-3.5 h-3.5" />;
     return <ExternalLink className="w-3.5 h-3.5" />;

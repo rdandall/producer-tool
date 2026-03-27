@@ -8,6 +8,8 @@
 import { NextResponse } from "next/server";
 import { getValidGmailToken, sendGmailReply, getGmailSignature } from "@/lib/gmail";
 import { getSetting, setSetting } from "@/lib/db/settings";
+import { plainTextToHtml } from "@/lib/markdown";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 interface ScheduledEmail {
   id: string;
@@ -23,7 +25,18 @@ interface ScheduledEmail {
   attachments?: Array<{ filename: string; mimeType: string; data: string }>;
 }
 
+function parseScheduledEmails(raw: string | null): ScheduledEmail[] {
+  if (!raw) return [];
+  const parsed = JSON.parse(raw);
+  return Array.isArray(parsed) ? parsed : [];
+}
+
 export async function POST() {
+  const rate = checkRateLimit(new Request("/api/email/send-scheduled"), "email.send-scheduled", 20, 60_000);
+  if (!rate.ok) {
+    return NextResponse.json({ sent: 0, error: "Rate limit exceeded" }, { status: 429 });
+  }
+
   const token = await getValidGmailToken();
   if (!token) {
     return NextResponse.json({ sent: 0, error: "Not connected to Gmail" });
@@ -32,7 +45,7 @@ export async function POST() {
   let scheduled: ScheduledEmail[] = [];
   try {
     const raw = await getSetting("scheduled_emails");
-    scheduled = raw ? (JSON.parse(raw) as ScheduledEmail[]) : [];
+    scheduled = parseScheduledEmails(raw);
   } catch {
     return NextResponse.json({ sent: 0 });
   }
@@ -58,7 +71,7 @@ export async function POST() {
         finalIsHtml = true;
         const htmlBody = email.isHtml
           ? email.body
-          : email.body.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
+          : plainTextToHtml(email.body);
         finalBody = `<div>${htmlBody}</div><br><div class="gmail_signature_prefix">--</div>${signature}`;
       }
 
@@ -82,7 +95,6 @@ export async function POST() {
     }
   }
 
-  // Remove successfully sent emails from the list
   if (sentIds.length) {
     const remaining = scheduled.filter((e) => !sentIds.includes(e.id));
     await setSetting("scheduled_emails", JSON.stringify(remaining));

@@ -1,17 +1,19 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest, NextResponse } from "next/server";
+import Anthropic from "@anthropic-ai/sdk";
+import { checkRateLimit } from "@/lib/rate-limit";
+import { parseJsonBody, requireString, ValidationError } from "@/lib/validation";
 
-const client = new Anthropic();
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const DOC_TYPE_LABELS: Record<string, string> = {
-  "brief":          "Edit Brief",
-  "meeting-notes":  "Meeting / Call Notes",
-  "project-notes":  "Project Notes",
-  "client-brief":   "Client-Facing Brief",
+  "brief": "Edit Brief",
+  "meeting-notes": "Meeting / Call Notes",
+  "project-notes": "Project Notes",
+  "client-brief": "Client-Facing Brief",
 };
 
 const DOC_TYPE_STRUCTURES: Record<string, string> = {
-  "brief": `# Edit Brief — {title}
+  brief: `# Edit Brief — {title}
 
 ## Project Overview
 [Client, deliverables, and overall goal in 2–3 sentences]
@@ -87,20 +89,29 @@ const DOC_TYPE_STRUCTURES: Record<string, string> = {
 
 export async function POST(req: NextRequest) {
   try {
-    const { rawInput, type, projectContext } = await req.json();
-
-    if (!rawInput?.trim()) {
-      return NextResponse.json({ error: "No input provided" }, { status: 400 });
+    const rate = checkRateLimit(req, "notes.generate", 30, 60_000);
+    if (!rate.ok) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded", retryAfter: rate.retryAfterSec },
+        { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } }
+      );
     }
+
+    const body = await parseJsonBody(req);
+    const rawInput = requireString(body.rawInput, "rawInput", { required: true, maxLength: 25000 });
+    const type = requireString(body.type, "type", { required: false, maxLength: 32 }) || "project-notes";
+    const projectContext = body.projectContext;
 
     const docTypeLabel = DOC_TYPE_LABELS[type] ?? "Document";
     const docStructure = DOC_TYPE_STRUCTURES[type] ?? DOC_TYPE_STRUCTURES["project-notes"];
     const today = new Date().toLocaleDateString("en-GB", {
-      day: "numeric", month: "long", year: "numeric",
+      day: "numeric",
+      month: "long",
+        year: "numeric",
     });
 
-    const projectInfo = projectContext
-      ? `\nProject context: "${projectContext.title}"${projectContext.client ? ` for ${projectContext.client}` : ""}${projectContext.brief ? `\nProject brief: ${projectContext.brief}` : ""}`
+    const projectInfo = typeof projectContext === "object" && projectContext
+      ? `\nProject context: "${(projectContext as { title?: string }).title ?? ""}"${(projectContext as { client?: string }).client ? ` for ${(projectContext as { client?: string }).client}` : ""}${(projectContext as { brief?: string }).brief ? `\nProject brief: ${(projectContext as { brief?: string }).brief}` : ""}`
       : "";
 
     const systemPrompt = `You are a production assistant for PRDCR, a professional video production company. You transform raw voice dictation and rough notes into clean, structured documents.
@@ -111,7 +122,7 @@ Document type requested: ${docTypeLabel}${projectInfo}
 Your job:
 1. Parse the raw, often rambling input and extract the key information
 2. Format it as a clean ${docTypeLabel} using proper markdown
-3. Extract any action items or tasks (things like "tell James to...", "ask Layla...", "I need to...", "remind me to...", "make sure...", "we should...")
+3. Extract any action items or tasks (things like "tell James to...", "ask Layla...", "I need to...", "remind me to...", "make sure...")
 4. For each extracted task, identify: who it's assigned to (if mentioned), estimated priority, and any due date hint
 
 You MUST respond with valid JSON in this exact structure:
@@ -190,10 +201,11 @@ Rules:
       extractedTasks: parsed.extractedTasks ?? [],
     });
   } catch (err) {
+    const status = err instanceof ValidationError ? err.statusCode : 500;
     console.error("notes/generate error:", err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Generation failed" },
-      { status: 500 }
+      { status }
     );
   }
 }

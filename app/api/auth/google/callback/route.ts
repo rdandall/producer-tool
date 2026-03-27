@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { headers } from "next/headers";
 import { exchangeGoogleCode } from "@/lib/google-calendar";
 import { setSetting } from "@/lib/db/settings";
+import { consumeOauthState } from "@/lib/oauth-state";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const code = searchParams.get("code");
   const error = searchParams.get("error");
+  const state = searchParams.get("state");
 
   const headersList = await headers();
   const host = headersList.get("host") ?? "localhost:3000";
@@ -18,6 +20,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(
       `${origin}/dashboard/calendar?error=access_denied`
     );
+  }
+
+  const stateOk = await consumeOauthState("google-calendar-auth", state);
+  if (!stateOk) {
+    return NextResponse.redirect(`${origin}/dashboard/calendar?error=invalid_oauth_state`);
   }
 
   try {
