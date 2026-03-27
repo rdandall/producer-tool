@@ -90,12 +90,12 @@ export async function POST(req: NextRequest) {
     const cc = body.cc === undefined ? undefined : requireEmailList(body.cc, "cc", { required: false, maxItems: 25 });
     const subject = requireString(body.subject, "subject", { required: false, maxLength: 300 }) || "";
     const emailBody =
-      requireString(body.emailBody, "emailBody", { required: true, maxLength: 100000 }) || "";
+      requireString(body.emailBody, "emailBody", { required: true, maxLength: 100000 }) ?? "";
     const scheduledAt = optionalDateIso(body.scheduledAt, "scheduledAt");
 
-    const threadId = requireString(body.threadId, "threadId", { required: false, maxLength: 200 });
-    const inReplyTo = requireString(body.inReplyTo, "inReplyTo", { required: false, maxLength: 300 });
-    const references = requireString(body.references, "references", { required: false, maxLength: 5000 });
+    const threadId = requireString(body.threadId, "threadId", { required: false, maxLength: 200 }) ?? undefined;
+    const inReplyTo = requireString(body.inReplyTo, "inReplyTo", { required: false, maxLength: 300 }) ?? undefined;
+    const references = requireString(body.references, "references", { required: false, maxLength: 5000 }) ?? undefined;
     const isHtml = body.isHtml === true;
     const attachments = Array.isArray(body.attachments) ? body.attachments : [];
 
