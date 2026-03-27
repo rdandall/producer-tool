@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     const body = await parseJsonBody(req);
     const to = requireEmailList(body.to, "to", { required: true, maxItems: 25 });
     const subject = requireString(body.subject, "subject", { required: false, maxLength: 300 });
-    const content = requireString(body.content, "content", { required: true, maxLength: 25000 });
+    const content = requireString(body.content, "content", { required: true, maxLength: 25000 }) ?? "";
     const title = requireString(body.title, "title", { required: false, maxLength: 240 }) ?? "Document";
     const personalNote = requireString(body.personalNote, "personalNote", { required: false, maxLength: 2000 }) ?? "";
 
