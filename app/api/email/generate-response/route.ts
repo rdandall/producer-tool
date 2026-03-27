@@ -40,8 +40,8 @@ export async function POST(req: NextRequest) {
     const thread = Array.isArray(body.thread) ? body.thread : [];
     const variantType = requireString(body.variantType, "variantType", { required: false, maxLength: 24 }) ?? "";
     const projectContext = body.projectContext;
-    const phases = body.phases;
-    const tasks = body.tasks;
+    const phases = Array.isArray(body.phases) ? body.phases : [];
+    const tasks = Array.isArray(body.tasks) ? body.tasks : [];
     const userNotes = requireString(body.userNotes, "userNotes", { required: false, maxLength: 10000 }) ?? undefined;
 
     if (!thread.length) {
