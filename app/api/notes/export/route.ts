@@ -8,12 +8,8 @@ import {
   AlignmentType,
   BorderStyle,
 } from "docx";
-import {
-  checkRateLimit,
-  ValidationError,
-  parseJsonBody,
-  requireString,
-} from "@/lib/validation";
+import { ValidationError, parseJsonBody, requireString } from "@/lib/validation";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { renderSimpleMarkdownToHtml, sanitizeUrl, escapeHtml, plainTextToHtml } from "@/lib/markdown";
 
 interface LinkInput {

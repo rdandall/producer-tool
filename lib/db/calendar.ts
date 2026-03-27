@@ -161,7 +161,7 @@ export async function replaceEventsForSource(sourceId: string, events: Array<{
     .from("calendar_events")
     .delete()
     .eq("source_id", sourceId)
-    .not("google_event_id", "in", `(${remoteIds.map((id) => `'${id.replace(/'/g, \"''\")}'`).join(",") || "''"})`);
+    .not("google_event_id", "in", `(${remoteIds.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`);
 
   if (removeError) throw new Error(removeError.message);
 }
