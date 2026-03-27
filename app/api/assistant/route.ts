@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await parseJsonBody(req);
-    const transcript = requireString(body.transcript, "transcript", { required: true, maxLength: 3000 });
+    const transcript = requireString(body.transcript, "transcript", { required: true, maxLength: 3000 }) || "";
     const page = requireString(body.page, "page", { required: false, maxLength: 80 }) || "Dashboard";
 
     const today = new Date().toISOString().split("T")[0];
