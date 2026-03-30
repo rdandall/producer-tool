@@ -11,6 +11,7 @@ import { createTaskAction } from "@/app/actions";
 import { toast } from "sonner";
 import type { NoteLink, ExtractedTask } from "@/lib/db/notes";
 import { ContactAutocomplete, type Contact } from "./contact-autocomplete";
+import { useLiveDictation } from "@/hooks/use-live-dictation";
 
 interface Props {
   noteId: string;
@@ -35,6 +36,9 @@ export function SendPanel({
   projects,
   selectedProjectId,
 }: Props) {
+  void noteId;
+  void projects;
+
   const [openSections, setOpenSections] = useState<Set<Section>>(
     new Set(["export", "tasks"])
   );
@@ -46,6 +50,18 @@ export function SendPanel({
   const [emailNote, setEmailNote] = useState("");
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
+  const {
+    cancelDictation,
+    isFinalizing,
+    isLiveFormatting,
+    isRecording,
+    toggleDictation,
+  } = useLiveDictation({
+    value: emailNote,
+    onChange: setEmailNote,
+    contextType: "email-body",
+    minLiveIntervalMs: 900,
+  });
 
   // Link state
   const [newLinkLabel, setNewLinkLabel] = useState("");
@@ -57,6 +73,10 @@ export function SendPanel({
   const [pushingTaskIdx, setPushingTaskIdx] = useState<number | null>(null);
 
   function toggleSection(section: Section) {
+    if (section === "email" && openSections.has("email")) {
+      cancelDictation();
+    }
+
     setOpenSections((prev) => {
       const next = new Set(prev);
       if (next.has(section)) next.delete(section);
@@ -374,13 +394,39 @@ export function SendPanel({
               </div>
 
               <div>
-                <label className="label-xs">Personal note (optional)</label>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <label className="label-xs mb-0">Personal note (optional)</label>
+                  <div className="flex items-center gap-2">
+                    {(isLiveFormatting || isFinalizing) && (
+                      <span className="text-[10px] text-muted-foreground/60">
+                        {isFinalizing ? "Final polish…" : "Tidying…"}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={toggleDictation}
+                      disabled={isFinalizing}
+                      className={cn(
+                        "flex items-center gap-1 text-[10px] px-2 py-0.5 border transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                        isRecording
+                          ? "border-red-400/60 text-red-400 bg-red-400/5"
+                          : "border-border/40 text-muted-foreground/50 hover:text-foreground"
+                      )}
+                    >
+                      {isRecording ? "Stop" : "Dictate"}
+                    </button>
+                  </div>
+                </div>
                 <textarea
                   value={emailNote}
                   onChange={(e) => setEmailNote(e.target.value)}
+                  readOnly={isRecording || isFinalizing}
                   placeholder="Hey James, see the brief below…"
                   rows={2}
-                  className="w-full text-[12px] bg-transparent border border-border px-2.5 py-1.5 focus:outline-none focus:border-primary text-foreground placeholder:text-muted-foreground/30 transition-colors resize-none"
+                  className={cn(
+                    "w-full text-[12px] bg-transparent border border-border px-2.5 py-1.5 focus:outline-none focus:border-primary text-foreground placeholder:text-muted-foreground/30 transition-colors resize-none",
+                    (isRecording || isFinalizing) && "cursor-not-allowed text-foreground/80"
+                  )}
                 />
               </div>
 

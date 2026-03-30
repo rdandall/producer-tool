@@ -3,15 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Mic, MicOff, Sparkles, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type SpeechRecognitionCtor = new () => any;
-declare global {
-  interface Window {
-    SpeechRecognition: SpeechRecognitionCtor;
-    webkitSpeechRecognition: SpeechRecognitionCtor;
-  }
-}
+import { useLiveDictation } from "@/hooks/use-live-dictation";
 
 interface BriefFieldProps {
   value: string;
@@ -28,14 +20,23 @@ export function BriefField({
   rows = 4,
   disabled = false,
 }: BriefFieldProps) {
-  const [isRecording, setIsRecording] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef = useRef<any>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const prevValueRef = useRef<string>(""); // for undo on AI failure
+
+  const {
+    error,
+    isFinalizing,
+    isLiveFormatting,
+    isRecording,
+    setError,
+    toggleDictation,
+  } = useLiveDictation({
+    value,
+    onChange,
+    contextType: "project-brief",
+    minLiveIntervalMs: 900,
+  });
 
   // Auto-resize textarea
   useEffect(() => {
@@ -46,78 +47,6 @@ export function BriefField({
     }
   }, [value]);
 
-  const micHelpText =
-    "Microphone access is blocked. Click the lock icon in the address bar, allow microphone for this site, then reload.";
-
-  /* ── Speech recognition ─────────────────────────────── */
-  const toggleRecording = useCallback(async () => {
-    if (isRecording) {
-      recognitionRef.current?.stop();
-      setIsRecording(false);
-      return;
-    }
-
-    if (!window.isSecureContext) {
-      setError("Voice input needs HTTPS (or localhost). Open this app on a secure URL and try again.");
-      return;
-    }
-
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setError("This browser does not support microphone capture.");
-      return;
-    }
-
-    // Request mic permission explicitly
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach((t) => t.stop());
-    } catch {
-      setError(micHelpText);
-      return;
-    }
-
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) {
-      setError("Voice input needs Chrome or Edge.");
-      return;
-    }
-
-    const rec = new SR();
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.lang = "en-US";
-    recognitionRef.current = rec;
-
-    let finalTranscript = value; // append to existing text
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    rec.onresult = (e: any) => {
-      let interim = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) finalTranscript += t + " ";
-        else interim = t;
-      }
-      onChange(finalTranscript + interim);
-    };
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    rec.onerror = (e: any) => {
-      if (e.error === "not-allowed") {
-        setError(micHelpText);
-      } else {
-        setError(`Mic error: ${e.error}`);
-      }
-      setIsRecording(false);
-    };
-
-    rec.onend = () => setIsRecording(false);
-
-    rec.start();
-    setIsRecording(true);
-    setError(null);
-  }, [isRecording, value, onChange]);
-
   /* ── Craft with Claude ──────────────────────────────── */
   const craftWithClaude = useCallback(async () => {
     if (!value.trim() || isGenerating) return;
@@ -125,7 +54,6 @@ export function BriefField({
     prevValueRef.current = value;
     onChange("");
     setIsGenerating(true);
-    setError(null);
 
     try {
       const res = await fetch("/api/brief", {
@@ -152,9 +80,9 @@ export function BriefField({
     } finally {
       setIsGenerating(false);
     }
-  }, [value, isGenerating, onChange]);
+  }, [value, isGenerating, onChange, setError]);
 
-  const busy = isRecording || isGenerating || disabled;
+  const busy = isRecording || isGenerating || disabled || isFinalizing;
 
   return (
     <div className="space-y-1">
@@ -195,6 +123,22 @@ export function BriefField({
                 </span>
               </>
             )}
+            {isLiveFormatting && !isRecording && (
+              <>
+                <Loader2 className="w-3 h-3 text-primary/50 animate-spin" />
+                <span className="text-[10px] text-primary/50 font-medium">
+                  Tidying…
+                </span>
+              </>
+            )}
+            {isFinalizing && (
+              <>
+                <Loader2 className="w-3 h-3 text-primary/50 animate-spin" />
+                <span className="text-[10px] text-primary/50 font-medium">
+                  Final polish…
+                </span>
+              </>
+            )}
             {isGenerating && (
               <>
                 <Loader2 className="w-3 h-3 text-primary/50 animate-spin" />
@@ -210,8 +154,8 @@ export function BriefField({
             {/* Mic */}
             <button
               type="button"
-              onClick={toggleRecording}
-              disabled={isGenerating || disabled}
+              onClick={toggleDictation}
+              disabled={isGenerating || disabled || isFinalizing}
               title={isRecording ? "Stop recording" : "Record voice"}
               className={cn(
                 "w-6 h-6 flex items-center justify-center rounded transition-all",

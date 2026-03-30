@@ -18,9 +18,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { createTaskDirectAction } from "@/app/actions";
 import { type AssistantActionPayload, type AssistantIntent } from "@/lib/assistant-contract";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnySpeechRecognition = any;
+import { useLiveDictation } from "@/hooks/use-live-dictation";
 
 interface Project {
   id: string;
@@ -34,31 +32,20 @@ interface GlobalAssistantProps {
 
 type AssistantState = "idle" | "listening" | "processing" | "confirming";
 
-export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
+export function GlobalAssistant({ projects }: GlobalAssistantProps) {
+  void projects;
+
   const router = useRouter();
   const pathname = usePathname();
 
   const [state, setState] = useState<AssistantState>("idle");
   const [transcript, setTranscript] = useState("");
-  const [interimText, setInterimText] = useState("");
   const [action, setAction] = useState<AssistantActionPayload | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
-  const [speechSupported, setSpeechSupported] = useState(false);
   const [showTextFallback, setShowTextFallback] = useState(false);
   const [textInput, setTextInput] = useState("");
 
-  const recognitionRef = useRef<AnySpeechRecognition>(null);
-  const finalTranscriptRef = useRef("");
-  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  const SILENCE_TIMEOUT_MS = 3000;
-
-  useEffect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
-    setSpeechSupported(!!SR);
-  }, []);
 
   // Focus textarea when text fallback shows
   useEffect(() => {
@@ -85,30 +72,11 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
       setState("processing");
       setShowTextFallback(false);
 
-      // Smart-enhance the transcript before sending to AI intent parser
-      let cleanedText = text;
-      try {
-        const enhanceRes = await fetch("/api/dictation/enhance", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
-        });
-        if (enhanceRes.ok) {
-          const enhanceData = await enhanceRes.json();
-          if (enhanceData.enhanced) {
-            cleanedText = enhanceData.enhanced;
-            setTranscript(cleanedText);
-          }
-        }
-      } catch {
-        // Fall back to raw transcript if enhance fails
-      }
-
       try {
         const res = await fetch("/api/assistant", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ transcript: cleanedText, page: getPageName() }),
+          body: JSON.stringify({ transcript: text, page: getPageName() }),
         });
         if (!res.ok) throw new Error("API error");
         const data = await res.json();
@@ -122,103 +90,39 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
     [getPageName]
   );
 
-  const clearSilenceTimer = useCallback(() => {
-    if (silenceTimerRef.current) {
-      clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
-    }
-  }, []);
-
-  const startListening = useCallback(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
-    if (!SR) return;
-
-    finalTranscriptRef.current = "";
-    clearSilenceTimer();
-
-    const recognition = new SR() as AnySpeechRecognition;
-    // continuous = true: browser won't auto-stop after a short pause —
-    // the user can take as long as they need between sentences.
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
-
-    const resetSilenceTimer = () => {
-      clearSilenceTimer();
-      // Auto-submit after 3 s of silence so hands-free still works
-      silenceTimerRef.current = setTimeout(() => {
-        recognition.stop();
-      }, SILENCE_TIMEOUT_MS);
-    };
-
-    recognition.onresult = (event: AnySpeechRecognition) => {
-      let interim = "";
-      // Only process newly-arrived results (event.resultIndex onward) to
-      // avoid double-counting previous finals with continuous mode.
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i];
-        if (result.isFinal) {
-          finalTranscriptRef.current += result[0].transcript + " ";
-        } else {
-          interim += result[0].transcript;
-        }
-      }
-      setTranscript(finalTranscriptRef.current.trim());
-      setInterimText(interim);
-      resetSilenceTimer();
-    };
-
-    recognition.onend = () => {
-      clearSilenceTimer();
-      setInterimText("");
-      const final = finalTranscriptRef.current.trim();
-      if (final) {
-        processTranscript(final);
-      } else {
+  const {
+    cancelDictation,
+    isFinalizing,
+    isLiveFormatting,
+    isRecording,
+    speechSupported,
+    startDictation,
+    stopDictation,
+  } = useLiveDictation({
+    value: transcript,
+    onChange: setTranscript,
+    contextType: "assistant-command",
+    minLiveIntervalMs: 900,
+    silenceTimeoutMs: 3000,
+    onRecordingStart: () => setState("listening"),
+    onFinalized: (value) => {
+      const finalText = value.trim();
+      if (!finalText) {
         setState("idle");
+        return;
       }
-    };
-
-    recognition.onerror = (e: AnySpeechRecognition) => {
-      clearSilenceTimer();
-      // "aborted" fires when we call .abort() ourselves; "no-speech" just
-      // means silence — if we already have transcript, process it normally.
-      if (e.error === "no-speech") {
-        const final = finalTranscriptRef.current.trim();
-        if (final) {
-          processTranscript(final);
-        } else {
-          setState("idle");
-        }
-      } else if (e.error !== "aborted") {
-        toast.error("Microphone error — check browser permissions");
-        setState("idle");
-      }
-      setInterimText("");
-    };
-
-    recognitionRef.current = recognition;
-    recognition.start();
-    setState("listening");
-  }, [processTranscript, clearSilenceTimer, SILENCE_TIMEOUT_MS]);
-
-  const stopListening = useCallback(() => {
-    clearSilenceTimer();
-    recognitionRef.current?.stop();
-  }, [clearSilenceTimer]);
+      void processTranscript(finalText);
+    },
+  });
 
   const dismiss = useCallback(() => {
-    clearSilenceTimer();
-    recognitionRef.current?.abort();
+    cancelDictation();
     setState("idle");
     setAction(null);
     setTranscript("");
-    setInterimText("");
     setTextInput("");
     setShowTextFallback(false);
-    finalTranscriptRef.current = "";
-  }, [clearSilenceTimer]);
+  }, [cancelDictation]);
 
   const executeAction = useCallback(async () => {
     if (!action) return;
@@ -315,17 +219,20 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
   const handleMicClick = useCallback(() => {
     if (state === "idle") {
       if (speechSupported) {
-        startListening();
+        setAction(null);
+        setShowTextFallback(false);
+        setTranscript("");
+        startDictation({ prefix: "" });
       } else {
         setShowTextFallback(true);
         setState("confirming");
       }
     } else if (state === "listening") {
-      stopListening();
+      stopDictation();
     } else {
       dismiss();
     }
-  }, [state, speechSupported, startListening, stopListening, dismiss]);
+  }, [dismiss, speechSupported, startDictation, state, stopDictation]);
 
   const handleTextSubmit = useCallback(() => {
     const text = textInput.trim();
@@ -533,15 +440,19 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
             <span className="w-1.5 h-1.5 rounded-full bg-foreground animate-pulse shrink-0" />
             <span className="text-xs text-muted-foreground flex-1 min-w-0 line-clamp-2 leading-relaxed">
               {transcript
-                ? `${transcript}${interimText ? ` ${interimText}` : ""}`
-                : interimText || "Listening…"}
+                ? transcript
+                : isFinalizing
+                  ? "Final polish…"
+                  : isLiveFormatting
+                    ? "Tidying your command…"
+                    : "Listening…"}
             </span>
-            {/* Tap Done to submit immediately, skipping the silence timer */}
             <button
-              onClick={stopListening}
-              className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-foreground bg-foreground/10 hover:bg-foreground/20 px-2 py-0.5 transition-colors ml-1"
+              onClick={stopDictation}
+              disabled={!isRecording}
+              className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-foreground bg-foreground/10 hover:bg-foreground/20 px-2 py-0.5 transition-colors ml-1 disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Done
+              {isRecording ? "Done" : "Polishing"}
             </button>
           </motion.div>
         )}
@@ -590,18 +501,26 @@ export function GlobalAssistant({ projects: _projects }: GlobalAssistantProps) {
             state === "idle"
               ? "Open executive assistant"
               : state === "listening"
-              ? "Listening — click to stop"
+              ? isRecording
+                ? "Listening — click to stop"
+                : "Tidying your command"
               : "Close assistant"
           }
           title={
             state === "idle"
               ? "Executive assistant"
               : state === "listening"
-              ? "Listening... click to stop"
+              ? isRecording
+                ? "Listening... click to stop"
+                : isFinalizing
+                  ? "Final polish in progress"
+                  : "Tidying your command"
               : ""
           }
         >
           {state === "processing" ? (
+            <Loader2 className="w-5 h-5 animate-spin" />
+          ) : state === "listening" && (isLiveFormatting || isFinalizing) && !isRecording ? (
             <Loader2 className="w-5 h-5 animate-spin" />
           ) : state === "listening" ? (
             <MicOff className="w-5 h-5" />

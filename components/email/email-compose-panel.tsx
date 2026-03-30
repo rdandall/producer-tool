@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { StoredEmail } from "@/lib/db/emails";
 import { ContactAutocomplete, type Contact } from "@/components/notes/contact-autocomplete";
+import { useLiveDictation } from "@/hooks/use-live-dictation";
 
 type ComposeMode = "write" | "ai";
 type ToneType = "punchy" | "balanced" | "detailed";
@@ -119,15 +120,12 @@ export function EmailComposePanel({
   const [showTonePicker, setShowTonePicker] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [isListening, setIsListening] = useState(false);
   const [ccRecipients, setCcRecipients] = useState<Contact[]>([]);
   const [showCc, setShowCc] = useState(false);
   const [attachments, setAttachments] = useState<File[]>([]);
   const [scheduledAt, setScheduledAt] = useState<string>("");
   const [showSchedule, setShowSchedule] = useState(false);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef = useRef<any>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -141,10 +139,6 @@ export function EmailComposePanel({
       : `${subjectPrefix}${latestMsg.subject}`
     : "(No subject)";
 
-  useEffect(() => {
-    return () => recognitionRef.current?.stop();
-  }, []);
-
   // Auto-resize textarea
   useEffect(() => {
     const el = textareaRef.current;
@@ -153,54 +147,22 @@ export function EmailComposePanel({
     el.style.height = `${Math.max(el.scrollHeight, 140)}px`;
   }, [text]);
 
-  const toggleDictation = useCallback(() => {
-    if (isListening) {
-      recognitionRef.current?.stop();
-      setIsListening(false);
-      return;
-    }
+  const updateBodyText = useCallback((nextValue: string) => {
+    setText(nextValue);
+    setAiGenerated(false);
+  }, []);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) {
-      toast.error("Speech recognition not supported in this browser.");
-      return;
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const recognition = new SR() as any;
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
-    recognitionRef.current = recognition;
-
-    let finalBase = mode === "ai" ? aiNotes : text;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onresult = (event: any) => {
-      let interim = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalBase += (finalBase ? " " : "") + t.trim();
-        } else {
-          interim = t;
-        }
-      }
-      const combined = finalBase + (interim ? " " + interim : "");
-      if (mode === "ai") setAiNotes(combined);
-      else setText(combined);
-    };
-
-    recognition.onend = () => {
-      if (mode === "ai") setAiNotes(finalBase);
-      else setText(finalBase);
-      setIsListening(false);
-    };
-
-    recognition.onerror = () => setIsListening(false);
-    recognition.start();
-    setIsListening(true);
-  }, [isListening, mode, aiNotes, text]);
+  const {
+    isFinalizing,
+    isLiveFormatting,
+    isRecording: isListening,
+    toggleDictation,
+  } = useLiveDictation({
+    value: mode === "ai" ? aiNotes : text,
+    onChange: mode === "ai" ? setAiNotes : updateBodyText,
+    contextType: mode === "ai" ? "email-notes" : "email-body",
+    minLiveIntervalMs: 900,
+  });
 
   const inferredProject = useCallback(() => {
     const threadText = threadMessages.map((m) => m.body_text ?? m.snippet ?? "").join(" ");
@@ -351,9 +313,9 @@ export function EmailComposePanel({
     textareaRef.current?.focus();
   }
 
-  const activeNotes = mode === "ai" ? aiNotes : text;
   const canGenerate = mode === "ai" && aiNotes.trim().length > 0;
   const canSend = text.trim().length > 0;
+  const dictationBusy = isListening || isFinalizing;
 
   return (
     <div className="border-t border-border bg-background flex flex-col">
@@ -410,8 +372,9 @@ export function EmailComposePanel({
         <div className="flex border border-border/60">
           <button
             onClick={() => { setMode("write"); setAiGenerated(false); }}
+            disabled={dictationBusy}
             className={cn(
-              "px-3 py-1 text-[11px] transition-colors",
+              "px-3 py-1 text-[11px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
               mode === "write"
                 ? "bg-foreground text-background font-medium"
                 : "text-muted-foreground hover:text-foreground"
@@ -421,8 +384,9 @@ export function EmailComposePanel({
           </button>
           <button
             onClick={() => setMode("ai")}
+            disabled={dictationBusy}
             className={cn(
-              "px-3 py-1 text-[11px] transition-colors flex items-center gap-1",
+              "px-3 py-1 text-[11px] transition-colors flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed",
               mode === "ai"
                 ? "bg-foreground text-background font-medium"
                 : "text-muted-foreground hover:text-foreground"
@@ -438,6 +402,7 @@ export function EmailComposePanel({
           <div className="relative">
             <button
               onClick={() => setShowTonePicker((v) => !v)}
+              disabled={dictationBusy}
               className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground border border-border/40 px-2.5 py-1 transition-colors"
             >
               {TONE_LABELS[tone]}
@@ -485,6 +450,12 @@ export function EmailComposePanel({
             </button>
           </span>
         )}
+
+        {(isLiveFormatting || isFinalizing) && (
+          <span className="text-[10px] text-muted-foreground/60 ml-auto">
+            {isFinalizing ? "Final polish…" : "Tidying as you talk…"}
+          </span>
+        )}
       </div>
 
       {/* ── AI notes (only visible when AI mode and no generated content yet) ── */}
@@ -496,8 +467,9 @@ export function EmailComposePanel({
             </label>
             <button
               onClick={toggleDictation}
+              disabled={isFinalizing}
               className={cn(
-                "flex items-center gap-1 text-[10px] px-2 py-0.5 border transition-colors",
+                "flex items-center gap-1 text-[10px] px-2 py-0.5 border transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
                 isListening
                   ? "border-red-400/60 text-red-400 bg-red-400/5"
                   : "border-border/40 text-muted-foreground/50 hover:text-foreground"
@@ -511,9 +483,13 @@ export function EmailComposePanel({
           <textarea
             value={aiNotes}
             onChange={(e) => setAiNotes(e.target.value)}
+            readOnly={mode === "ai" && dictationBusy}
             placeholder="Tell me what you want to say — I'll write it in your voice..."
             rows={3}
-            className="w-full resize-none text-[13px] text-foreground bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground/30 leading-relaxed"
+            className={cn(
+              "w-full resize-none text-[13px] text-foreground bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground/30 leading-relaxed",
+              mode === "ai" && dictationBusy && "cursor-not-allowed text-foreground/80"
+            )}
           />
         </div>
       )}
@@ -539,8 +515,9 @@ export function EmailComposePanel({
         {mode === "write" && (
           <button
             onClick={toggleDictation}
+            disabled={isFinalizing}
             className={cn(
-              "absolute top-4 right-5 flex items-center gap-1 text-[10px] px-2 py-0.5 border transition-colors z-10",
+              "absolute top-4 right-5 flex items-center gap-1 text-[10px] px-2 py-0.5 border transition-colors z-10 disabled:opacity-40 disabled:cursor-not-allowed",
               isListening
                 ? "border-red-400/60 text-red-400 bg-red-400/5 bg-background"
                 : "border-border/30 text-muted-foreground/40 hover:text-foreground bg-background"
@@ -560,7 +537,8 @@ export function EmailComposePanel({
           <textarea
             ref={textareaRef}
             value={text}
-            onChange={(e) => { setText(e.target.value); setAiGenerated(false); }}
+            onChange={(e) => updateBodyText(e.target.value)}
+            readOnly={mode === "write" && dictationBusy}
             placeholder={
               mode === "ai"
                 ? aiGenerated
@@ -572,7 +550,8 @@ export function EmailComposePanel({
               "w-full resize-none text-[13px] text-foreground bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground/30 leading-relaxed",
               mode === "write" && "pr-16",
               !text && mode === "ai" && !aiGenerated && "min-h-[80px]",
-              text && "min-h-[120px]"
+              text && "min-h-[120px]",
+              mode === "write" && dictationBusy && "cursor-not-allowed text-foreground/80"
             )}
             style={{ minHeight: "120px" }}
           />

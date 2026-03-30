@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Mic, Sparkles, Trash2, ChevronDown, Wand2 } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { NoteType } from "@/lib/db/notes";
 
@@ -33,6 +34,8 @@ export function DictationPanel({
   onProjectChange,
   defaultDocType = "brief",
 }: Props) {
+  const LIVE_FORMAT_MIN_INTERVAL_MS = 1500;
+
   const [rawInput, setRawInput] = useState("");
   const [docType, setDocType] = useState<NoteType>(defaultDocType);
   const [isRecording, setIsRecording] = useState(false);
@@ -40,10 +43,24 @@ export function DictationPanel({
   const [speechSupported, setSpeechSupported] = useState(false);
   const [showTypeDropdown, setShowTypeDropdown] = useState(false);
   const [wordCount, setWordCount] = useState(0);
-  const [isEnhancing, setIsEnhancing] = useState(false);
+  const [formattingState, setFormattingState] = useState<"idle" | "live" | "final">("idle");
 
   const recognitionRef = useRef<AnySpeechRecognition>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const sessionPrefixRef = useRef("");
+  const sessionRawFinalRef = useRef("");
+  const sessionInterimRef = useRef("");
+  const formatAbortRef = useRef<AbortController | null>(null);
+  const formatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const formatRunIdRef = useRef(0);
+  const discardSessionRef = useRef(false);
+  const didFinalizeSessionRef = useRef(false);
+  const activeFormatModeRef = useRef<"live" | "final" | null>(null);
+  const queuedLiveDraftRef = useRef("");
+  const lastLiveDraftRef = useRef("");
+  const lastLiveRequestAtRef = useRef(0);
+  const liveCooldownUntilRef = useRef(0);
+  const lastCooldownToastAtRef = useRef(0);
 
   useEffect(() => {
     const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition;
@@ -63,102 +80,372 @@ export function DictationPanel({
     }
   }, [rawInput, interimTranscript]);
 
-  const enhanceTranscript = useCallback(async (text: string) => {
-    if (!text.trim() || text.trim().split(/\s+/).length < 5) return; // skip very short text
-    setIsEnhancing(true);
-    try {
-      const res = await fetch("/api/dictation/enhance", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data.enhanced && data.enhanced !== text) {
-        setRawInput(data.enhanced);
-      }
-    } catch {
-      // silent — fall back to raw transcript
-    } finally {
-      setIsEnhancing(false);
+  const cancelScheduledFormat = useCallback(() => {
+    if (formatTimerRef.current) {
+      clearTimeout(formatTimerRef.current);
+      formatTimerRef.current = null;
     }
   }, []);
+
+  const cancelActiveFormat = useCallback((nextState: "idle" | "live" | "final" = "idle") => {
+    formatRunIdRef.current += 1;
+    formatAbortRef.current?.abort();
+    formatAbortRef.current = null;
+    activeFormatModeRef.current = null;
+    queuedLiveDraftRef.current = "";
+    cancelScheduledFormat();
+    setFormattingState(nextState);
+  }, [cancelScheduledFormat]);
+
+  const combineNoteText = useCallback((prefix: string, dictatedText: string) => {
+    const cleanDictatedText = dictatedText.trim();
+    if (!prefix.trim()) return cleanDictatedText;
+    if (!cleanDictatedText) return prefix;
+
+    const needsListBreak = /^([-*] |\d+\. )/.test(cleanDictatedText);
+    if (needsListBreak && !prefix.endsWith("\n")) {
+      return `${prefix.trimEnd()}\n${cleanDictatedText}`;
+    }
+    if (prefix.endsWith(" ") || prefix.endsWith("\n")) {
+      return `${prefix}${cleanDictatedText}`;
+    }
+    return `${prefix.trimEnd()} ${cleanDictatedText}`;
+  }, []);
+
+  const getRemainingCooldownMs = useCallback(() => {
+    return Math.max(0, liveCooldownUntilRef.current - Date.now());
+  }, []);
+
+  const parseRetryAfterMs = useCallback((message: string, retryAfterHeader: string | null) => {
+    const headerSeconds = retryAfterHeader ? Number(retryAfterHeader) : Number.NaN;
+    if (Number.isFinite(headerSeconds) && headerSeconds > 0) {
+      return headerSeconds * 1000;
+    }
+
+    const match = message.match(/try again in (\d+)s/i);
+    if (match) {
+      return Number(match[1]) * 1000;
+    }
+
+    return 30_000;
+  }, []);
+
+  const announceCooldown = useCallback((fallbackMs?: number) => {
+    const now = Date.now();
+    if (now - lastCooldownToastAtRef.current < 5_000) return;
+    lastCooldownToastAtRef.current = now;
+
+    const remainingMs = Math.max(getRemainingCooldownMs(), fallbackMs ?? 0);
+    const seconds = Math.max(1, Math.ceil(remainingMs / 1000));
+    toast.error(`OpenAI rate-limited. Pausing live cleanup for ${seconds}s.`);
+  }, [getRemainingCooldownMs]);
+
+  const getCurrentDraft = useCallback((includeInterim = true) => {
+    const finalText = sessionRawFinalRef.current.trim();
+    const interimText = includeInterim ? sessionInterimRef.current.trim() : "";
+
+    if (finalText && interimText) return `${finalText} ${interimText}`.trim();
+    return (finalText || interimText).trim();
+  }, []);
+
+  const streamFormattedDraft = useCallback(async (draftText: string, mode: "live" | "final") => {
+    const normalizedDraft = draftText.trim();
+    if (!normalizedDraft) {
+      setFormattingState("idle");
+      setRawInput(sessionPrefixRef.current);
+      return;
+    }
+
+    const remainingCooldownMs = getRemainingCooldownMs();
+    if (remainingCooldownMs > 0) {
+      setFormattingState("idle");
+      setRawInput(combineNoteText(sessionPrefixRef.current, normalizedDraft));
+      if (mode === "final") {
+        toast.error("OpenAI rate-limited. Keeping your original wording for now.");
+      } else {
+        announceCooldown(remainingCooldownMs);
+      }
+      return;
+    }
+
+    if (mode === "live") {
+      if (formatAbortRef.current && activeFormatModeRef.current === "live") {
+        queuedLiveDraftRef.current = normalizedDraft;
+        return;
+      }
+
+      if (normalizedDraft === lastLiveDraftRef.current) {
+        return;
+      }
+    }
+
+    const runId = formatRunIdRef.current + 1;
+    formatRunIdRef.current = runId;
+    if (mode === "final") {
+      queuedLiveDraftRef.current = "";
+      formatAbortRef.current?.abort();
+    }
+
+    const controller = new AbortController();
+    formatAbortRef.current = controller;
+    activeFormatModeRef.current = mode;
+    setFormattingState(mode);
+
+    if (mode === "live") {
+      lastLiveDraftRef.current = normalizedDraft;
+      lastLiveRequestAtRef.current = Date.now();
+    }
+
+    try {
+      const res = await fetch("/api/dictation/live-format", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dictationText: normalizedDraft,
+          existingText: sessionPrefixRef.current,
+          noteType: docType,
+          mode,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        const errorText = await res.text();
+        let message = `Live formatting failed (${res.status})`;
+
+        if (errorText) {
+          try {
+            const parsed = JSON.parse(errorText) as { error?: string };
+            if (parsed.error) {
+              message = parsed.error;
+            }
+          } catch {
+            message = errorText;
+          }
+        }
+
+        if (res.status === 429) {
+          const retryAfterMs = parseRetryAfterMs(message, res.headers.get("Retry-After"));
+          liveCooldownUntilRef.current = Math.max(
+            liveCooldownUntilRef.current,
+            Date.now() + retryAfterMs
+          );
+          queuedLiveDraftRef.current = "";
+        }
+
+        throw new Error(message);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let formatted = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        formatted += decoder.decode(value, { stream: true });
+        if (runId !== formatRunIdRef.current) {
+          return;
+        }
+
+        setRawInput(combineNoteText(sessionPrefixRef.current, formatted));
+      }
+
+      if (runId !== formatRunIdRef.current) {
+        return;
+      }
+
+      setRawInput(combineNoteText(sessionPrefixRef.current, formatted || normalizedDraft));
+    } catch (err) {
+      if (controller.signal.aborted || runId !== formatRunIdRef.current) {
+        return;
+      }
+
+      setRawInput(combineNoteText(sessionPrefixRef.current, normalizedDraft));
+      if (mode !== "final" && err instanceof Error && /rate limit/i.test(err.message)) {
+        announceCooldown();
+      }
+      if (mode === "final") {
+        toast.error(
+          err instanceof Error
+            ? `${err.message}. Keeping your original wording.`
+            : "OpenAI live cleanup failed. Keeping your original wording."
+        );
+      }
+    } finally {
+      if (runId === formatRunIdRef.current) {
+        formatAbortRef.current = null;
+        activeFormatModeRef.current = null;
+        setFormattingState("idle");
+      }
+
+      if (
+        mode === "live" &&
+        runId === formatRunIdRef.current &&
+        getRemainingCooldownMs() === 0
+      ) {
+        const queuedDraft = queuedLiveDraftRef.current.trim();
+        if (queuedDraft && queuedDraft !== lastLiveDraftRef.current) {
+          queuedLiveDraftRef.current = "";
+          cancelScheduledFormat();
+
+          const remainingDelay = Math.max(
+            0,
+            LIVE_FORMAT_MIN_INTERVAL_MS - (Date.now() - lastLiveRequestAtRef.current)
+          );
+
+          formatTimerRef.current = setTimeout(() => {
+            void streamFormattedDraft(queuedDraft, "live");
+          }, remainingDelay);
+        }
+      }
+    }
+  }, [
+    LIVE_FORMAT_MIN_INTERVAL_MS,
+    announceCooldown,
+    cancelScheduledFormat,
+    combineNoteText,
+    docType,
+    getRemainingCooldownMs,
+    parseRetryAfterMs,
+  ]);
+
+  const scheduleLiveFormat = useCallback((draftText: string) => {
+    cancelScheduledFormat();
+
+    if (draftText.trim().split(/\s+/).filter(Boolean).length < 2) return;
+    if (getRemainingCooldownMs() > 0) return;
+
+    queuedLiveDraftRef.current = draftText;
+    const waitMs = Math.max(
+      250,
+      LIVE_FORMAT_MIN_INTERVAL_MS - (Date.now() - lastLiveRequestAtRef.current)
+    );
+
+    formatTimerRef.current = setTimeout(() => {
+      const latestDraft = queuedLiveDraftRef.current.trim();
+      if (!latestDraft) return;
+      queuedLiveDraftRef.current = "";
+      void streamFormattedDraft(latestDraft, "live");
+    }, waitMs);
+  }, [LIVE_FORMAT_MIN_INTERVAL_MS, cancelScheduledFormat, getRemainingCooldownMs, streamFormattedDraft]);
+
+  const finalizeSession = useCallback((includeInterim: boolean) => {
+    if (didFinalizeSessionRef.current) return;
+    didFinalizeSessionRef.current = true;
+
+    setIsRecording(false);
+    cancelScheduledFormat();
+
+    const finalDraft = getCurrentDraft(includeInterim);
+    setInterimTranscript("");
+    sessionInterimRef.current = "";
+
+    if (discardSessionRef.current) {
+      discardSessionRef.current = false;
+      setFormattingState("idle");
+      setRawInput(sessionPrefixRef.current);
+      return;
+    }
+
+    if (finalDraft) {
+      void streamFormattedDraft(finalDraft, "final");
+    } else {
+      setFormattingState("idle");
+    }
+  }, [cancelScheduledFormat, getCurrentDraft, streamFormattedDraft]);
+
+  useEffect(() => {
+    return () => {
+      recognitionRef.current?.stop();
+      cancelActiveFormat();
+    };
+  }, [cancelActiveFormat]);
 
   const startRecording = useCallback(() => {
     const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition;
     if (!SR) return;
+
+    cancelActiveFormat();
+    discardSessionRef.current = false;
+    didFinalizeSessionRef.current = false;
+    sessionPrefixRef.current = rawInput;
+    sessionRawFinalRef.current = "";
+    sessionInterimRef.current = "";
+    setInterimTranscript("");
 
     const recognition = new SR();
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = "en-US";
 
-    // Accumulate final text in a closure variable (not state) so onend can read it
-    let sessionFinal = "";
-
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     recognition.onresult = (event: any) => {
       let interim = "";
-      let finalChunk = "";
+      const finalChunks: string[] = [];
 
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const transcript = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
-          finalChunk += transcript + " ";
+          finalChunks.push(transcript.trim());
         } else {
           interim += transcript;
         }
       }
 
-      if (finalChunk) {
-        sessionFinal += finalChunk;
-        setRawInput((prev) => prev + finalChunk);
-        setInterimTranscript("");
-      } else {
-        setInterimTranscript(interim);
+      const finalizedChunk = finalChunks.join(" ").trim();
+      if (finalizedChunk) {
+        sessionRawFinalRef.current = sessionRawFinalRef.current.trim()
+          ? `${sessionRawFinalRef.current.trim()} ${finalizedChunk}`.trim()
+          : finalizedChunk;
       }
+
+      sessionInterimRef.current = interim.trim();
+      setInterimTranscript(sessionInterimRef.current);
+
+      const liveDraft = getCurrentDraft(true);
+      setRawInput(combineNoteText(sessionPrefixRef.current, liveDraft));
+      scheduleLiveFormat(liveDraft);
     };
 
-    recognition.onerror = () => {
-      setIsRecording(false);
-      setInterimTranscript("");
-    };
+    recognition.onerror = () => finalizeSession(true);
 
-    recognition.onend = () => {
-      setIsRecording(false);
-      setInterimTranscript("");
-      // Auto-enhance the dictated text when recording stops
-      const fullText = sessionFinal.trim();
-      if (fullText) enhanceTranscript(fullText);
-    };
+    recognition.onend = () => finalizeSession(false);
 
     recognitionRef.current = recognition;
     recognition.start();
     setIsRecording(true);
-  }, [enhanceTranscript]);
+  }, [cancelActiveFormat, combineNoteText, finalizeSession, getCurrentDraft, rawInput, scheduleLiveFormat]);
 
   const stopRecording = useCallback(() => {
     recognitionRef.current?.stop();
     setIsRecording(false);
-    setInterimTranscript("");
   }, []);
 
   function handleGenerate() {
-    const combined = (rawInput + (interimTranscript ? " " + interimTranscript : "")).trim();
-    if (!combined || isGenerating) return;
-    if (isRecording) stopRecording();
+    const combined = rawInput.trim();
+    if (!combined || isGenerating || isRecording || formattingState === "final") return;
     onGenerate(combined, docType);
   }
 
   function handleClear() {
-    if (isRecording) stopRecording();
+    discardSessionRef.current = true;
+    recognitionRef.current?.stop();
+    cancelActiveFormat();
     setRawInput("");
     setInterimTranscript("");
+    sessionPrefixRef.current = "";
+    sessionRawFinalRef.current = "";
+    sessionInterimRef.current = "";
+    setIsRecording(false);
   }
 
   const selectedType = TYPE_OPTIONS.find((t) => t.value === docType) ?? TYPE_OPTIONS[0];
-  const hasInput = rawInput.trim().length > 0 || interimTranscript.trim().length > 0;
-  const displayText = rawInput + (interimTranscript ? interimTranscript : "");
+  const hasInput = rawInput.trim().length > 0;
+  const displayText = rawInput;
+  const isLiveFormatting = formattingState === "live";
+  const isFinalizing = formattingState === "final";
 
   return (
     <div className="border-b border-border">
@@ -257,7 +544,14 @@ export function DictationPanel({
           ref={textareaRef}
           value={displayText}
           onChange={(e) => {
-            if (!isRecording) setRawInput(e.target.value);
+            if (isRecording) return;
+            cancelActiveFormat();
+            discardSessionRef.current = false;
+            sessionPrefixRef.current = "";
+            sessionRawFinalRef.current = "";
+            sessionInterimRef.current = "";
+            setInterimTranscript("");
+            setRawInput(e.target.value);
           }}
           readOnly={isRecording}
           placeholder={
@@ -270,20 +564,6 @@ export function DictationPanel({
             isRecording && "text-foreground/80 cursor-not-allowed"
           )}
         />
-
-        {/* Interim transcript indicator */}
-        <AnimatePresence>
-          {interimTranscript && (
-            <motion.p
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="text-[12px] text-muted-foreground/40 italic mt-1"
-            >
-              {interimTranscript}
-            </motion.p>
-          )}
-        </AnimatePresence>
       </div>
 
       {/* Action bar */}
@@ -292,12 +572,12 @@ export function DictationPanel({
         {speechSupported && (
           <button
             onClick={isRecording ? stopRecording : startRecording}
-            disabled={isEnhancing}
+            disabled={isFinalizing}
             className={cn(
               "relative flex items-center gap-2 px-3 py-1.5 text-[12px] font-medium transition-all border",
               isRecording
                 ? "border-destructive text-destructive bg-destructive/5 hover:bg-destructive/10"
-                : isEnhancing
+                : isFinalizing
                 ? "border-border text-muted-foreground/40 cursor-not-allowed"
                 : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"
             )}
@@ -319,8 +599,8 @@ export function DictationPanel({
           </button>
         )}
 
-        {/* Smart enhance indicator */}
-        {isEnhancing && (
+        {/* Live cleanup indicator */}
+        {(isLiveFormatting || isFinalizing) && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -328,7 +608,7 @@ export function DictationPanel({
             className="flex items-center gap-1.5 text-[11px] text-muted-foreground/60"
           >
             <Wand2 className="w-3 h-3 animate-pulse text-primary/60" />
-            Cleaning up…
+            {isFinalizing ? "Final polish…" : "Tidying as you talk…"}
           </motion.div>
         )}
 
@@ -346,10 +626,10 @@ export function DictationPanel({
         {/* Generate */}
         <button
           onClick={handleGenerate}
-          disabled={!hasInput || isGenerating}
+          disabled={!hasInput || isGenerating || isRecording || isFinalizing}
           className={cn(
             "ml-auto flex items-center gap-2 px-4 py-1.5 text-[12px] font-semibold transition-all",
-            hasInput && !isGenerating
+            hasInput && !isGenerating && !isRecording && !isFinalizing
               ? "bg-primary text-primary-foreground hover:-translate-y-px shadow-sm"
               : "bg-muted text-muted-foreground/40 cursor-not-allowed"
           )}

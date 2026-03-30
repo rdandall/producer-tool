@@ -15,9 +15,12 @@ import {
   HelpCircle,
   LayoutGrid,
   List,
+  Mic,
+  MicOff,
   AlertTriangle,
   Layers,
   MousePointerClick,
+  Wand2,
 } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -26,6 +29,7 @@ import { createTaskAction } from "@/app/actions";
 import type { GoogleCalendarEvent, GoogleCalendar } from "@/lib/google-calendar";
 import type { PrdcrEvent } from "@/app/api/calendar/events/route";
 import type { Phase } from "@/lib/db/projects";
+import { useLiveDictation } from "@/hooks/use-live-dictation";
 
 // ── Constants ────────────────────────────────────────────────────────
 const DAYS_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -117,7 +121,6 @@ export function CalendarClient() {
 
   // ── Add-event dialog state ───────────────────────────────────────
   const [eventDialogOpen, setEventDialogOpen] = useState(false);
-  const [eventDialogDate, setEventDialogDate] = useState("");
   const [eventTitle, setEventTitle] = useState("");
   const [eventDate, setEventDate] = useState("");
   const [eventTime, setEventTime] = useState("");
@@ -127,6 +130,18 @@ export function CalendarClient() {
   const [eventAllDay, setEventAllDay] = useState(false);
   const [isCreatingEvent, setIsCreatingEvent] = useState(false);
   const eventTitleRef = useRef<HTMLInputElement>(null);
+  const {
+    cancelDictation: cancelEventNotesDictation,
+    isFinalizing: isEventNotesFinalizing,
+    isLiveFormatting: isEventNotesFormatting,
+    isRecording: isEventNotesRecording,
+    toggleDictation: toggleEventNotesDictation,
+  } = useLiveDictation({
+    value: eventNotes,
+    onChange: setEventNotes,
+    contextType: "calendar-notes",
+    minLiveIntervalMs: 850,
+  });
 
   // ── Conflict detection state ─────────────────────────────────────
   const [dismissedConflicts, setDismissedConflicts] = useState<Set<string>>(new Set());
@@ -181,13 +196,13 @@ export function CalendarClient() {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         if (showFeatures) { setShowFeatures(false); return; }
-        if (eventDialogOpen) { setEventDialogOpen(false); return; }
+        if (eventDialogOpen) { closeEventDialog(); return; }
         if (quickAddDate || convertEvent) { setQuickAddDate(null); setConvertEvent(null); setTaskFormError(""); }
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [showFeatures, quickAddDate, convertEvent]);
+  }, [closeEventDialog, convertEvent, eventDialogOpen, quickAddDate, showFeatures]);
 
   // ── Fetch events ─────────────────────────────────────────────────
   const fetchEvents = useCallback(async (y: number, m: number) => {
@@ -273,7 +288,13 @@ export function CalendarClient() {
   }
 
   // ── Open event dialog ────────────────────────────────────────────
+  const closeEventDialog = useCallback(() => {
+    cancelEventNotesDictation();
+    setEventDialogOpen(false);
+  }, [cancelEventNotesDictation]);
+
   function openEventDialog(dateStr: string) {
+    cancelEventNotesDictation();
     setEventTitle("");
     setEventDate(dateStr);
     setEventTime("09:00");
@@ -313,7 +334,7 @@ export function CalendarClient() {
         return;
       }
       toast.success("Event added to Google Calendar");
-      setEventDialogOpen(false);
+      closeEventDialog();
       await fetchEvents(year, month);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create event");
@@ -779,8 +800,6 @@ export function CalendarClient() {
                     const isSelected = dateStr === selected;
                     const dayEvents = eventsByDate[dateStr] ?? [];
                     const isWeekend = day.getDay() === 0 || day.getDay() === 6;
-                    const isLastCol = day.getDay() === 6;
-
                     return (
                       <div key={dateStr} className={cn("border-r border-border/30 last:border-r-0", isWeekend && "bg-accent/[0.04]")}>
                         {/* Day header */}
@@ -999,7 +1018,7 @@ export function CalendarClient() {
         )}
 
         {/* Days */}
-        {printScheduleDates.map((dateStr, di) => {
+        {printScheduleDates.map((dateStr) => {
           const d = new Date(dateStr + "T12:00:00");
           const isToday = dateStr === todayStr;
           const events = eventsByDate[dateStr] ?? [];
@@ -1157,14 +1176,14 @@ export function CalendarClient() {
       {/* ── Add Google Calendar Event Dialog ─────────────────── */}
       {eventDialogOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={() => setEventDialogOpen(false)} />
+          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={closeEventDialog} />
           <div className="relative bg-background border border-border shadow-xl w-full max-w-sm mx-4">
             <div className="flex items-center justify-between px-5 py-4 border-b border-border">
               <div>
                 <p className="text-sm font-bold text-foreground">New Calendar Event</p>
                 <p className="text-[11px] text-muted-foreground/50 mt-0.5">Adds to your primary Google Calendar</p>
               </div>
-              <button onClick={() => setEventDialogOpen(false)} className="text-muted-foreground/40 hover:text-foreground transition-colors">
+              <button onClick={closeEventDialog} className="text-muted-foreground/40 hover:text-foreground transition-colors">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -1208,17 +1227,51 @@ export function CalendarClient() {
                 </div>
               )}
               <div>
-                <label className="text-[10px] uppercase tracking-wide text-muted-foreground/50 font-semibold block mb-1">Notes (optional)</label>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <label className="text-[10px] uppercase tracking-wide text-muted-foreground/50 font-semibold block">
+                    Notes (optional)
+                  </label>
+                  <div className="flex items-center gap-2">
+                    {(isEventNotesFormatting || isEventNotesFinalizing) && (
+                      <span className="text-[10px] text-muted-foreground/60">
+                        {isEventNotesFinalizing ? "Final polish…" : "Tidying…"}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={toggleEventNotesDictation}
+                      disabled={isEventNotesFinalizing}
+                      className={cn(
+                        "flex items-center gap-1 text-[10px] px-2 py-0.5 border transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                        isEventNotesRecording
+                          ? "border-red-400/60 text-red-400 bg-red-400/5"
+                          : "border-border/40 text-muted-foreground/50 hover:text-foreground"
+                      )}
+                    >
+                      {isEventNotesRecording ? <MicOff className="w-2.5 h-2.5" /> : <Mic className="w-2.5 h-2.5" />}
+                      {isEventNotesRecording ? "Stop" : "Dictate"}
+                      {isEventNotesRecording && <span className="w-1 h-1 rounded-full bg-red-400 animate-pulse" />}
+                      {!isEventNotesRecording && (isEventNotesFormatting || isEventNotesFinalizing) && (
+                        <Wand2 className="w-2.5 h-2.5" />
+                      )}
+                    </button>
+                  </div>
+                </div>
                 <textarea
                   value={eventNotes}
                   onChange={(e) => setEventNotes(e.target.value)}
+                  readOnly={isEventNotesRecording || isEventNotesFinalizing}
                   placeholder="Description or notes…"
                   rows={2}
-                  className={fieldClass + " resize-none"}
+                  className={cn(
+                    fieldClass,
+                    "resize-none",
+                    (isEventNotesRecording || isEventNotesFinalizing) && "cursor-not-allowed text-foreground/80"
+                  )}
                 />
               </div>
               <div className="flex gap-2 pt-1">
-                <button type="button" onClick={() => setEventDialogOpen(false)} className="px-3 py-2 text-xs border border-border/50 text-muted-foreground hover:text-foreground transition-colors">
+                <button type="button" onClick={closeEventDialog} className="px-3 py-2 text-xs border border-border/50 text-muted-foreground hover:text-foreground transition-colors">
                   Cancel
                 </button>
                 <button

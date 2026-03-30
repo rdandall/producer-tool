@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { Check, Edit3, Eye } from "lucide-react";
+import { Check, Edit3, Eye, Loader2, Mic, MicOff, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { renderSimpleMarkdownToHtml } from "@/lib/markdown";
+import { useLiveDictation } from "@/hooks/use-live-dictation";
 
 interface Props {
   content: string;
@@ -16,12 +17,29 @@ export function DocumentEditor({ content, onChange, isSaving }: Props) {
   const [mode, setMode] = useState<"preview" | "edit">("preview");
   const [editValue, setEditValue] = useState(content);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const {
+    cancelDictation,
+    isFinalizing,
+    isLiveFormatting,
+    isRecording,
+    toggleDictation,
+  } = useLiveDictation({
+    value: editValue,
+    onChange: setEditValue,
+    contextType: "document-body",
+    minLiveIntervalMs: 900,
+  });
 
   // Sync external content changes (e.g., after AI generation)
   useEffect(() => {
-    setEditValue(content);
-    setMode("preview");
-  }, [content]);
+    const frame = requestAnimationFrame(() => {
+      cancelDictation();
+      setEditValue(content);
+      setMode("preview");
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [cancelDictation, content]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -37,6 +55,7 @@ export function DocumentEditor({ content, onChange, isSaving }: Props) {
   }
 
   function handleSave() {
+    cancelDictation();
     onChange(editValue);
     setMode("preview");
   }
@@ -47,6 +66,7 @@ export function DocumentEditor({ content, onChange, isSaving }: Props) {
       handleSave();
     }
     if (e.key === "Escape") {
+      cancelDictation();
       setEditValue(content); // revert
       setMode("preview");
     }
@@ -65,7 +85,10 @@ export function DocumentEditor({ content, onChange, isSaving }: Props) {
       <div className="flex items-center justify-between px-6 py-2.5 border-b border-border/50 shrink-0">
         <div className="flex items-center gap-1">
           <button
-            onClick={() => setMode("preview")}
+            onClick={() => {
+              cancelDictation();
+              setMode("preview");
+            }}
             className={cn(
               "flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium transition-colors",
               mode === "preview"
@@ -94,12 +117,37 @@ export function DocumentEditor({ content, onChange, isSaving }: Props) {
           {isSaving && (
             <span className="text-[10px] text-muted-foreground/40">Saving…</span>
           )}
+          {mode === "edit" && (isLiveFormatting || isFinalizing) && (
+            <span className="text-[10px] text-muted-foreground/50">
+              {isFinalizing ? "Final polish…" : "Tidying…"}
+            </span>
+          )}
+          {mode === "edit" && (
+            <button
+              onClick={toggleDictation}
+              disabled={isFinalizing}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium border transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+                isRecording
+                  ? "border-red-400/60 text-red-400 bg-red-400/5"
+                  : "border-border/50 text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {isRecording ? <MicOff className="w-3 h-3" /> : <Mic className="w-3 h-3" />}
+              {isRecording ? "Stop" : "Dictate"}
+              {isRecording && <span className="w-1 h-1 rounded-full bg-red-400 animate-pulse" />}
+              {!isRecording && (isLiveFormatting || isFinalizing) && (
+                <Wand2 className="w-3 h-3" />
+              )}
+            </button>
+          )}
           {mode === "edit" && (
             <button
               onClick={handleSave}
+              disabled={isFinalizing}
               className="flex items-center gap-1.5 px-3 py-1 text-[11px] font-semibold bg-primary text-primary-foreground hover:-translate-y-px transition-all shadow-sm"
             >
-              <Check className="w-3 h-3" />
+              {isFinalizing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
               Save
             </button>
           )}
@@ -120,7 +168,11 @@ export function DocumentEditor({ content, onChange, isSaving }: Props) {
             value={editValue}
             onChange={(e) => setEditValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            className="w-full max-w-2xl bg-transparent text-[13px] font-mono leading-relaxed text-foreground resize-none focus:outline-none border border-border/30 p-4 focus:border-primary transition-colors min-h-[400px]"
+            readOnly={isRecording || isFinalizing}
+            className={cn(
+              "w-full max-w-2xl bg-transparent text-[13px] font-mono leading-relaxed text-foreground resize-none focus:outline-none border border-border/30 p-4 focus:border-primary transition-colors min-h-[400px]",
+              (isRecording || isFinalizing) && "cursor-not-allowed"
+            )}
             placeholder="Start writing..."
             spellCheck
           />

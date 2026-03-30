@@ -17,6 +17,7 @@ import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { ContactAutocomplete, type Contact } from "@/components/notes/contact-autocomplete";
+import { useLiveDictation } from "@/hooks/use-live-dictation";
 
 type ComposeMode = "write" | "ai";
 type ToneType = "punchy" | "balanced" | "detailed";
@@ -77,19 +78,12 @@ export function NewEmailModal({
   const [showTonePicker, setShowTonePicker] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [isListening, setIsListening] = useState(false);
   const [attachments, setAttachments] = useState<File[]>([]);
   const [scheduledAt, setScheduledAt] = useState("");
   const [showSchedule, setShowSchedule] = useState(false);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef = useRef<any>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    return () => recognitionRef.current?.stop();
-  }, []);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -108,54 +102,22 @@ export function NewEmailModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const toggleDictation = useCallback(() => {
-    if (isListening) {
-      recognitionRef.current?.stop();
-      setIsListening(false);
-      return;
-    }
+  const updateBodyText = useCallback((nextValue: string) => {
+    setText(nextValue);
+    setAiGenerated(false);
+  }, []);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) {
-      toast.error("Speech recognition not supported in this browser.");
-      return;
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const recognition = new SR() as any;
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
-    recognitionRef.current = recognition;
-
-    let finalBase = mode === "ai" ? aiNotes : text;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onresult = (event: any) => {
-      let interim = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalBase += (finalBase ? " " : "") + t.trim();
-        } else {
-          interim = t;
-        }
-      }
-      const combined = finalBase + (interim ? " " + interim : "");
-      if (mode === "ai") setAiNotes(combined);
-      else setText(combined);
-    };
-
-    recognition.onend = () => {
-      if (mode === "ai") setAiNotes(finalBase);
-      else setText(finalBase);
-      setIsListening(false);
-    };
-
-    recognition.onerror = () => setIsListening(false);
-    recognition.start();
-    setIsListening(true);
-  }, [isListening, mode, aiNotes, text]);
+  const {
+    isFinalizing,
+    isLiveFormatting,
+    isRecording: isListening,
+    toggleDictation,
+  } = useLiveDictation({
+    value: mode === "ai" ? aiNotes : text,
+    onChange: mode === "ai" ? setAiNotes : updateBodyText,
+    contextType: mode === "ai" ? "email-notes" : "email-body",
+    minLiveIntervalMs: 900,
+  });
 
   async function handleGenerate() {
     if (!aiNotes.trim()) return;
@@ -225,6 +187,8 @@ export function NewEmailModal({
       reader.readAsDataURL(file);
     });
   }
+
+  const dictationBusy = isListening || isFinalizing;
 
   async function handleSend() {
     const body = text.trim();
@@ -425,8 +389,9 @@ export function NewEmailModal({
                 </label>
                 <button
                   onClick={toggleDictation}
+                  disabled={isFinalizing}
                   className={cn(
-                    "flex items-center gap-1 text-[10px] px-2 py-0.5 border transition-colors",
+                    "flex items-center gap-1 text-[10px] px-2 py-0.5 border transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
                     isListening
                       ? "border-red-400/60 text-red-400"
                       : "border-border/40 text-muted-foreground/40 hover:text-foreground"
@@ -440,9 +405,13 @@ export function NewEmailModal({
               <textarea
                 value={aiNotes}
                 onChange={(e) => setAiNotes(e.target.value)}
+                readOnly={mode === "ai" && dictationBusy}
                 placeholder="Tell me what you want to say..."
                 rows={3}
-                className="w-full resize-none text-[13px] text-foreground bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground/30 leading-relaxed"
+                className={cn(
+                  "w-full resize-none text-[13px] text-foreground bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground/30 leading-relaxed",
+                  mode === "ai" && dictationBusy && "cursor-not-allowed text-foreground/80"
+                )}
               />
             </div>
           )}
@@ -466,8 +435,9 @@ export function NewEmailModal({
             {mode === "write" && (
               <button
                 onClick={toggleDictation}
+                disabled={isFinalizing}
                 className={cn(
-                  "absolute top-4 right-5 flex items-center gap-1 text-[10px] px-2 py-0.5 border transition-colors z-10",
+                  "absolute top-4 right-5 flex items-center gap-1 text-[10px] px-2 py-0.5 border transition-colors z-10 disabled:opacity-40 disabled:cursor-not-allowed",
                   isListening
                     ? "border-red-400/60 text-red-400 bg-background"
                     : "border-border/30 text-muted-foreground/40 hover:text-foreground bg-background"
@@ -487,7 +457,8 @@ export function NewEmailModal({
               <textarea
                 ref={textareaRef}
                 value={text}
-                onChange={(e) => { setText(e.target.value); setAiGenerated(false); }}
+                onChange={(e) => updateBodyText(e.target.value)}
+                readOnly={mode === "write" && dictationBusy}
                 placeholder={
                   mode === "ai"
                     ? aiGenerated
@@ -497,7 +468,8 @@ export function NewEmailModal({
                 }
                 className={cn(
                   "w-full resize-none text-[13px] text-foreground bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground/30 leading-relaxed",
-                  mode === "write" && "pr-16"
+                  mode === "write" && "pr-16",
+                  mode === "write" && dictationBusy && "cursor-not-allowed text-foreground/80"
                 )}
                 style={{ minHeight: "160px" }}
               />
@@ -507,6 +479,11 @@ export function NewEmailModal({
           {/* Generate button */}
           {mode === "ai" && !aiGenerated && canGenerate && !isGenerating && (
             <div className="px-5 pb-3">
+              {(isLiveFormatting || isFinalizing) && (
+                <p className="mb-2 text-[10px] text-muted-foreground/60">
+                  {isFinalizing ? "Final polish…" : "Tidying as you talk…"}
+                </p>
+              )}
               <button
                 onClick={handleGenerate}
                 className="w-full flex items-center justify-center gap-2 py-2.5 text-xs font-semibold bg-foreground text-background hover:opacity-90 transition-opacity"

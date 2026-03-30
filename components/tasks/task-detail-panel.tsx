@@ -2,13 +2,14 @@
 
 import { useState, useEffect, useTransition } from "react";
 import { motion } from "framer-motion";
-import { X, Link2, Plus, ExternalLink } from "lucide-react";
+import { X, Link2, Plus, ExternalLink, Mic, MicOff, Wand2 } from "lucide-react";
 import { updateTaskAction, deleteTaskAction } from "@/app/actions";
 import { TaskCheckbox } from "./task-checkbox";
 import type { TaskWithProject, TaskLink } from "@/lib/db/tasks";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useLiveDictation } from "@/hooks/use-live-dictation";
 
 interface Project {
   id: string;
@@ -45,18 +46,44 @@ export function TaskDetailPanel({ task, projects, onClose }: Props) {
   const [addingLink, setAddingLink] = useState(false);
   const [newLinkLabel, setNewLinkLabel] = useState("");
   const [newLinkUrl, setNewLinkUrl] = useState("");
+  const {
+    cancelDictation,
+    isFinalizing,
+    isLiveFormatting,
+    isRecording,
+    toggleDictation,
+  } = useLiveDictation({
+    value: title,
+    onChange: setTitle,
+    contextType: "task-title",
+    minLiveIntervalMs: 700,
+  });
 
   useEffect(() => {
-    setTitle(task.title);
-    setPriority(task.priority);
-    setProjectId(task.project_id ?? "");
-    setDueDate(task.due_date ?? "");
-    setAssignedTo(task.assigned_to ?? "");
-    setLinks(task.links ?? []);
-    setAddingLink(false);
-    setNewLinkLabel("");
-    setNewLinkUrl("");
-  }, [task.id]);
+    const frame = requestAnimationFrame(() => {
+      cancelDictation();
+      setTitle(task.title);
+      setPriority(task.priority);
+      setProjectId(task.project_id ?? "");
+      setDueDate(task.due_date ?? "");
+      setAssignedTo(task.assigned_to ?? "");
+      setLinks(task.links ?? []);
+      setAddingLink(false);
+      setNewLinkLabel("");
+      setNewLinkUrl("");
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [
+    cancelDictation,
+    task.assigned_to,
+    task.due_date,
+    task.id,
+    task.links,
+    task.priority,
+    task.project_id,
+    task.title,
+  ]);
 
   function handleSave() {
     if (!title.trim()) return;
@@ -124,13 +151,32 @@ export function TaskDetailPanel({ task, projects, onClose }: Props) {
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
+          readOnly={isRecording || isFinalizing}
           className={cn(
             "flex-1 text-sm font-medium bg-transparent border-none outline-none text-foreground",
             "placeholder:text-muted-foreground/40 leading-snug",
-            task.completed && "line-through text-muted-foreground"
+            task.completed && "line-through text-muted-foreground",
+            (isRecording || isFinalizing) && "cursor-not-allowed"
           )}
           placeholder="Task title"
         />
+        <button
+          onClick={toggleDictation}
+          disabled={isFinalizing}
+          className={cn(
+            "shrink-0 flex items-center gap-1 text-[10px] px-2 py-0.5 border transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
+            isRecording
+              ? "border-red-400/60 text-red-400 bg-red-400/5"
+              : "border-border/40 text-muted-foreground/50 hover:text-foreground"
+          )}
+          aria-label={isRecording ? "Stop dictation" : "Dictate task title"}
+        >
+          {isRecording ? <MicOff className="w-2.5 h-2.5" /> : <Mic className="w-2.5 h-2.5" />}
+          {isRecording && <span className="w-1 h-1 rounded-full bg-red-400 animate-pulse" />}
+          {!isRecording && (isLiveFormatting || isFinalizing) && (
+            <Wand2 className="w-2.5 h-2.5" />
+          )}
+        </button>
         <button
           onClick={onClose}
           className="shrink-0 text-muted-foreground/30 hover:text-foreground transition-colors"
@@ -152,6 +198,11 @@ export function TaskDetailPanel({ task, projects, onClose }: Props) {
 
       {/* Fields */}
       <div className="p-5 space-y-5 flex-1">
+        {(isLiveFormatting || isFinalizing) && (
+          <p className="text-[10px] text-muted-foreground/60 -mt-1">
+            {isFinalizing ? "Final polish…" : "Tidying task title…"}
+          </p>
+        )}
         {/* Project */}
         <div>
           <label className="label-xs">Project</label>
