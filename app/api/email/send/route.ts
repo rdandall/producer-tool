@@ -42,8 +42,14 @@ async function saveScheduledEmails(emails: ScheduledEmail[]): Promise<void> {
   await setSetting("scheduled_emails", JSON.stringify(emails));
 }
 
-export async function GET() {
-  const rate = checkRateLimit(new Request("/api/email/send"), "email.send.get", 120, 60_000);
+export async function GET(req: NextRequest) {
+  const rate = checkRateLimit(req, "email.send.get", 120, 60_000);
+  if (!rate.ok) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded", retryAfter: rate.retryAfterSec },
+      { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } }
+    );
+  }
   const scheduled = await getScheduledEmails();
   return NextResponse.json({ scheduled });
 }

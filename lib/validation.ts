@@ -57,11 +57,17 @@ export function requireEmailList(value: unknown, field: string, options: { requi
     return [];
   }
 
-  if (!Array.isArray(value)) {
+  const rawEntries = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : null;
+
+  if (!rawEntries) {
     throw new ValidationError(`Field '${field}' must be an array of emails`);
   }
 
-  const emails = value.map((entry) => {
+  const emails = rawEntries.map((entry) => {
     if (typeof entry !== "string") {
       throw new ValidationError(`Invalid entry in '${field}'`);
     }

@@ -219,7 +219,7 @@ export function NewEmailModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to: toRecipients.map((c) => c.email).join(", "),
+          to: toRecipients.map((c) => c.email),
           cc: ccRecipients.length > 0 ? ccRecipients.map((c) => c.email) : undefined,
           subject: subject.trim(),
           emailBody: body,
@@ -230,11 +230,12 @@ export function NewEmailModal({
         }),
       });
 
-      if (!res.ok) throw new Error("Send failed");
+      const payload = await res.json().catch(() => ({})) as { error?: string };
+      if (!res.ok) throw new Error(payload.error ?? "Send failed");
       toast.success(scheduledAt ? "Email scheduled" : "Email sent");
       onSent();
-    } catch {
-      toast.error("Failed to send. Check your Gmail connection.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to send.");
     } finally {
       setIsSending(false);
     }

@@ -92,6 +92,36 @@ function contactsFromEmails(emails: string[]): Contact[] {
   return contacts;
 }
 
+function formatForwardedTimestamp(dateStr: string | null): string {
+  if (!dateStr) return "";
+
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return dateStr;
+
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function buildForwardedBody(message: StoredEmail, subject: string): string {
+  const originalBody = (message.body_text ?? message.snippet ?? "").trim();
+  const lines = [
+    "---------- Forwarded message ---------",
+    `From: ${message.from_name ? `${message.from_name} <${message.from_email}>` : message.from_email}`,
+    message.received_at ? `Date: ${formatForwardedTimestamp(message.received_at)}` : null,
+    `Subject: ${subject}`,
+    message.to_emails.length > 0 ? `To: ${message.to_emails.join(", ")}` : null,
+    "",
+    originalBody || "(No message content)",
+  ];
+
+  return lines.filter((line): line is string => line !== null).join("\n");
+}
+
 function getReplyRecipients(
   threadMessages: StoredEmail[],
   replyMode: ReplyMode,
@@ -291,7 +321,7 @@ export function EmailComposePanel({
 
   async function handleSend() {
     const body = text.trim();
-    if (!body) {
+    if (!body && replyMode !== "forward") {
       toast.error("Write something before sending.");
       return;
     }
@@ -300,6 +330,10 @@ export function EmailComposePanel({
       return;
     }
     if (!latestMsg) return;
+
+    const finalBody = replyMode === "forward"
+      ? [body, buildForwardedBody(latestMsg, subject)].filter(Boolean).join("\n\n")
+      : body;
 
     setIsSending(true);
     try {
@@ -315,10 +349,10 @@ export function EmailComposePanel({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to: effectiveToRecipients.map((c) => c.email).join(", "),
+          to: effectiveToRecipients.map((c) => c.email),
           cc: ccRecipients.length > 0 ? ccRecipients.map((c) => c.email) : undefined,
           subject,
-          emailBody: body,
+          emailBody: finalBody,
           threadId: replyMode === "forward" ? undefined : latestMsg.gmail_thread_id,
           isHtml: false,
           attachments: attachmentData.length > 0 ? attachmentData : undefined,
@@ -326,11 +360,12 @@ export function EmailComposePanel({
         }),
       });
 
-      if (!res.ok) throw new Error("Send failed");
+      const payload = await res.json().catch(() => ({})) as { error?: string };
+      if (!res.ok) throw new Error(payload.error ?? "Send failed");
       toast.success(scheduledAt ? "Email scheduled" : "Sent");
       onSent();
-    } catch {
-      toast.error("Failed to send. Check your Gmail connection.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to send.");
     } finally {
       setIsSending(false);
     }
@@ -342,7 +377,9 @@ export function EmailComposePanel({
   }
 
   const canGenerate = mode === "ai" && aiNotes.trim().length > 0;
-  const canSend = text.trim().length > 0 && effectiveToRecipients.length > 0;
+  const canSend =
+    effectiveToRecipients.length > 0 &&
+    (replyMode === "forward" || text.trim().length > 0);
   const dictationBusy = isListening || isFinalizing;
 
   return (
@@ -581,7 +618,9 @@ export function EmailComposePanel({
                 ? aiGenerated
                   ? "Edit this or send as-is..."
                   : "Your generated email will appear here after you click Generate..."
-                : "Write your reply..."
+                : replyMode === "forward"
+                  ? "Add a note for the recipient (optional)..."
+                  : "Write your reply..."
             }
             className={cn(
               "w-full resize-none text-[13px] text-foreground bg-transparent border-0 focus:outline-none placeholder:text-muted-foreground/30 leading-relaxed",

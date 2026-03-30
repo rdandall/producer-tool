@@ -6,8 +6,8 @@ import { checkRateLimit } from "@/lib/rate-limit";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-export async function POST() {
-  const rate = checkRateLimit(new Request("/api/email/analyze-tone"), "email.analyzeTone", 6, 60_000);
+export async function POST(req: Request) {
+  const rate = checkRateLimit(req, "email.analyzeTone", 6, 60_000);
   if (!rate.ok) {
     return NextResponse.json(
       { error: "Rate limit exceeded", retryAfter: rate.retryAfterSec },

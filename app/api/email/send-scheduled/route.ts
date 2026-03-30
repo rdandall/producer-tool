@@ -5,7 +5,7 @@
  * is now in the past and sends them via Gmail. Called by the email client on
  * an interval (every 60 s) while the page is open.
  */
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getValidGmailToken, sendGmailReply, getGmailSignature } from "@/lib/gmail";
 import { getSetting, setSetting } from "@/lib/db/settings";
 import { plainTextToHtml } from "@/lib/markdown";
@@ -31,8 +31,8 @@ function parseScheduledEmails(raw: string | null): ScheduledEmail[] {
   return Array.isArray(parsed) ? parsed : [];
 }
 
-export async function POST() {
-  const rate = checkRateLimit(new Request("/api/email/send-scheduled"), "email.send-scheduled", 20, 60_000);
+export async function POST(req: NextRequest) {
+  const rate = checkRateLimit(req, "email.send-scheduled", 20, 60_000);
   if (!rate.ok) {
     return NextResponse.json({ sent: 0, error: "Rate limit exceeded" }, { status: 429 });
   }

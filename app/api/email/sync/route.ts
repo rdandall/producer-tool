@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { syncInboxEmails } from "@/lib/email-sync";
 
-export async function POST() {
-  const rate = checkRateLimit(new Request("/api/email/sync"), "email.sync", 20, 60_000);
+export async function POST(req: Request) {
+  const rate = checkRateLimit(req, "email.sync", 20, 60_000);
   if (!rate.ok) {
     return NextResponse.json(
       { error: "Rate limit exceeded", retryAfter: rate.retryAfterSec },
