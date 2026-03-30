@@ -152,6 +152,11 @@ export function CalendarClient() {
   // ── Feature guide state ──────────────────────────────────────────
   const [showFeatures, setShowFeatures] = useState(false);
 
+  const closeEventDialog = useCallback(() => {
+    cancelEventNotesDictation();
+    setEventDialogOpen(false);
+  }, [cancelEventNotesDictation]);
+
   // Strip ?connected=true from URL after OAuth redirect
   // Also read assistant-provided event params (title, date, time, notes)
   useEffect(() => {
@@ -286,12 +291,6 @@ export function CalendarClient() {
       }
     });
   }
-
-  // ── Open event dialog ────────────────────────────────────────────
-  const closeEventDialog = useCallback(() => {
-    cancelEventNotesDictation();
-    setEventDialogOpen(false);
-  }, [cancelEventNotesDictation]);
 
   function openEventDialog(dateStr: string) {
     cancelEventNotesDictation();
