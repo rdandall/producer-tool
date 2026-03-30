@@ -77,6 +77,21 @@ const TONE_LABELS: Record<ToneType, string> = {
   detailed: "Detailed",
 };
 
+function contactsFromEmails(emails: string[]): Contact[] {
+  const seen = new Set<string>();
+  const contacts: Contact[] = [];
+
+  for (const email of emails) {
+    const normalized = email.trim();
+    const key = normalized.toLowerCase();
+    if (!normalized || seen.has(key)) continue;
+    seen.add(key);
+    contacts.push({ name: null, email: normalized });
+  }
+
+  return contacts;
+}
+
 function getReplyRecipients(
   threadMessages: StoredEmail[],
   replyMode: ReplyMode,
@@ -120,6 +135,7 @@ export function EmailComposePanel({
   const [showTonePicker, setShowTonePicker] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [toRecipients, setToRecipients] = useState<Contact[]>([]);
   const [ccRecipients, setCcRecipients] = useState<Contact[]>([]);
   const [showCc, setShowCc] = useState(false);
   const [attachments, setAttachments] = useState<File[]>([]);
@@ -131,6 +147,8 @@ export function EmailComposePanel({
 
   const latestMsg = threadMessages[threadMessages.length - 1];
   const replyRecipients = getReplyRecipients(threadMessages, replyMode, userEmail);
+  const effectiveToRecipients =
+    replyMode === "forward" ? toRecipients : contactsFromEmails(replyRecipients);
 
   const subjectPrefix = replyMode === "forward" ? "Fwd: " : "Re: ";
   const subject = latestMsg?.subject
@@ -146,6 +164,12 @@ export function EmailComposePanel({
     el.style.height = "auto";
     el.style.height = `${Math.max(el.scrollHeight, 140)}px`;
   }, [text]);
+
+  useEffect(() => {
+    if (replyMode === "forward") {
+      setToRecipients([]);
+    }
+  }, [replyMode]);
 
   const updateBodyText = useCallback((nextValue: string) => {
     setText(nextValue);
@@ -271,6 +295,10 @@ export function EmailComposePanel({
       toast.error("Write something before sending.");
       return;
     }
+    if (effectiveToRecipients.length === 0) {
+      toast.error("Add at least one recipient.");
+      return;
+    }
     if (!latestMsg) return;
 
     setIsSending(true);
@@ -287,11 +315,11 @@ export function EmailComposePanel({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to: replyRecipients.join(", "),
+          to: effectiveToRecipients.map((c) => c.email).join(", "),
           cc: ccRecipients.length > 0 ? ccRecipients.map((c) => c.email) : undefined,
           subject,
           emailBody: body,
-          threadId: latestMsg.gmail_thread_id,
+          threadId: replyMode === "forward" ? undefined : latestMsg.gmail_thread_id,
           isHtml: false,
           attachments: attachmentData.length > 0 ? attachmentData : undefined,
           scheduledAt: scheduledAt || undefined,
@@ -314,7 +342,7 @@ export function EmailComposePanel({
   }
 
   const canGenerate = mode === "ai" && aiNotes.trim().length > 0;
-  const canSend = text.trim().length > 0;
+  const canSend = text.trim().length > 0 && effectiveToRecipients.length > 0;
   const dictationBusy = isListening || isFinalizing;
 
   return (
@@ -328,7 +356,7 @@ export function EmailComposePanel({
             </span>
             <span className="text-[10px] text-muted-foreground/50 truncate max-w-[240px]">{subject}</span>
           </div>
-          {replyRecipients.length > 0 && (
+          {replyMode !== "forward" && replyRecipients.length > 0 && (
             <p className="text-[11px] text-muted-foreground/60 mt-0.5">
               → {replyRecipients.join(", ")}
             </p>
@@ -357,7 +385,16 @@ export function EmailComposePanel({
         </div>
       </div>
 
-      {/* ── CC field ── */}
+      {/* ── Recipient fields ── */}
+      {replyMode === "forward" && (
+        <div className="px-4 py-2 border-b border-border/40 bg-sidebar-accent/5">
+          <div className="flex items-start gap-2">
+            <span className="text-[10px] text-muted-foreground/40 uppercase tracking-wide font-semibold pt-2 shrink-0 w-5">To</span>
+            <ContactAutocomplete value={toRecipients} onChange={setToRecipients} />
+          </div>
+        </div>
+      )}
+
       {showCc && (
         <div className="px-4 py-2 border-b border-border/40 bg-sidebar-accent/5">
           <div className="flex items-start gap-2">

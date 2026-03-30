@@ -59,19 +59,36 @@ export async function getAllEmails(): Promise<StoredEmail[]> {
   return (data ?? []).map((e) => normalizeEmail(e as Record<string, unknown>));
 }
 
-/** Upsert messages and return the number that are genuinely new (not previously synced). */
-export async function upsertEmails(messages: GmailMessage[]): Promise<number> {
-  if (!messages.length) return 0;
+export async function getExistingEmailIds(messageIds: string[]): Promise<string[]> {
+  if (!messageIds.length) return [];
   const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("emails")
+    .select("gmail_message_id")
+    .in("gmail_message_id", messageIds);
+
+  if (error) {
+    console.error("getExistingEmailIds:", error.message);
+    return [];
+  }
+
+  return (data ?? []).map((row) => row.gmail_message_id as string);
+}
+
+/** Upsert messages and return the number that were inserted successfully. */
+export async function upsertEmails(
+  messages: GmailMessage[],
+  options?: { chunkSize?: number }
+): Promise<{ newCount: number; errors: Array<{ gmail_message_id: string; error: string }> }> {
+  if (!messages.length) return { newCount: 0, errors: [] };
+  const supabase = await createClient();
+  const chunkSize = options?.chunkSize ?? 25;
 
   // Determine which IDs are already in the DB so we can return an accurate new-count
   const incomingIds = messages.map((m) => m.id);
-  const { data: existing } = await supabase
-    .from("emails")
-    .select("gmail_message_id")
-    .in("gmail_message_id", incomingIds);
-  const existingSet = new Set((existing ?? []).map((r) => r.gmail_message_id as string));
-  const newCount = messages.filter((m) => !existingSet.has(m.id)).length;
+  const existingSet = new Set(await getExistingEmailIds(incomingIds));
+  let newCount = messages.filter((m) => !existingSet.has(m.id)).length;
+  const errors: Array<{ gmail_message_id: string; error: string }> = [];
 
   const rows = messages.map((m) => ({
     gmail_message_id: m.id,
@@ -90,13 +107,31 @@ export async function upsertEmails(messages: GmailMessage[]): Promise<number> {
     attachments: m.attachments,
   }));
 
-  const { error } = await supabase
-    .from("emails")
-    .upsert(rows, { onConflict: "gmail_message_id", ignoreDuplicates: false });
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    const chunk = rows.slice(i, i + chunkSize);
+    const { error } = await supabase
+      .from("emails")
+      .upsert(chunk, { onConflict: "gmail_message_id", ignoreDuplicates: false });
 
-  if (error) throw new Error(`Email upsert failed: ${error.message}`);
+    if (!error) continue;
 
-  return newCount;
+    // Fall back to one-by-one inserts to avoid one malformed message freezing the whole inbox.
+    for (const row of chunk) {
+      const { error: rowError } = await supabase
+        .from("emails")
+        .upsert(row, { onConflict: "gmail_message_id", ignoreDuplicates: false });
+
+      if (rowError) {
+        errors.push({
+          gmail_message_id: row.gmail_message_id,
+          error: rowError.message,
+        });
+        if (!existingSet.has(row.gmail_message_id)) newCount -= 1;
+      }
+    }
+  }
+
+  return { newCount, errors };
 }
 
 export async function getPendingTaskSuggestions(): Promise<EmailTaskSuggestion[]> {

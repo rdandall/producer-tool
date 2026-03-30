@@ -275,13 +275,23 @@ export function EmailClient({
         synced: number;
         emails?: StoredEmail[];
         taskSuggestions?: EmailTaskSuggestion[];
+        syncErrors?: Array<{ type: string; id?: string; error: string }>;
       };
 
       if (data.emails) setEmails(data.emails);
       if (data.taskSuggestions) setTaskSuggestions(data.taskSuggestions);
+      if (data.syncErrors?.length) {
+        console.warn("Email sync partial errors:", data.syncErrors);
+      }
 
       if (!silent) {
-        if (data.synced > 0) {
+        if (data.syncErrors?.length) {
+          toast.warning(
+            data.synced > 0
+              ? `${data.synced} new email${data.synced !== 1 ? "s" : ""}, but some messages failed to sync`
+              : "Inbox refreshed, but some messages failed to sync"
+          );
+        } else if (data.synced > 0) {
           toast.success(`${data.synced} new email${data.synced !== 1 ? "s" : ""}`);
         } else {
           toast.info("Inbox is up to date");
@@ -307,17 +317,33 @@ export function EmailClient({
     const key = "prdcr-email-last-sync";
     const last = sessionStorage.getItem(key);
     const now = Date.now();
-    if (!last || now - parseInt(last) > 30_000) {
+    if (!last || now - parseInt(last) > 10_000) {
       sessionStorage.setItem(key, String(now));
       handleSync(true);
     }
   }, [handleSync]);
 
   useEffect(() => {
-    const interval = setInterval(() => {
+    const syncIfVisible = () => {
       if (!document.hidden) handleSync(true);
-    }, 60_000); // every 60s
-    return () => clearInterval(interval);
+    };
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) syncIfVisible();
+    };
+
+    window.addEventListener("focus", syncIfVisible);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    const interval = setInterval(() => {
+      syncIfVisible();
+    }, 30_000);
+
+    return () => {
+      window.removeEventListener("focus", syncIfVisible);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      clearInterval(interval);
+    };
   }, [handleSync]);
 
   // ── Scheduled send polling ── check every 60s for due emails, send them
@@ -342,7 +368,7 @@ export function EmailClient({
   }, []);
 
   const handleSelectThread = useCallback(
-    (threadId: string, _latestMessageId?: string) => {
+    (threadId: string) => {
       setSelectedThreadId(threadId);
       setMobileView("thread");
       setConflictsDismissed(false);
@@ -484,7 +510,8 @@ export function EmailClient({
   }, []);
 
   const handlePhaseAction = useCallback(
-    async (phaseId: string | null, _action: string) => {
+    async (phaseId: string | null, action: string) => {
+      void action;
       if (!phaseId) {
         toast.info("Open the project to update the phase manually.");
         setPhaseSignalDismissed(true);

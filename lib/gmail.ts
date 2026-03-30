@@ -238,36 +238,74 @@ export async function listInboxMessages(
   accessToken: string,
   maxResults = 100
 ): Promise<GmailMessage[]> {
+  const ids = await listInboxMessageIds(accessToken, maxResults);
+  const { messages } = await getGmailMessagesByIds(accessToken, ids);
+  return messages;
+}
+
+export async function listInboxMessageIds(
+  accessToken: string,
+  maxResults = 100
+): Promise<string[]> {
   // Use labelIds=INBOX (direct label filter) rather than q="in:inbox" (search query)
-  // — more reliable and faster; results come back sorted by internalDate descending
+  // and request only the IDs for the fast-path sync check.
   const listRes = await fetch(
     `${GMAIL_BASE}/messages?` +
-      new URLSearchParams({ labelIds: "INBOX", maxResults: String(maxResults) }),
+      new URLSearchParams({
+        labelIds: "INBOX",
+        maxResults: String(maxResults),
+        fields: "messages/id",
+      }),
     { headers: { Authorization: `Bearer ${accessToken}` } }
   );
   if (!listRes.ok) {
     const errBody = await listRes.json().catch(() => ({}));
     throw new Error(`Failed to list Gmail messages: ${errBody?.error?.message ?? listRes.status}`);
   }
+
   const listData = await listRes.json();
-  const ids: string[] = (listData.messages ?? []).map((m: { id: string }) => m.id);
-  if (!ids.length) return [];
+  return (listData.messages ?? []).map((m: { id: string }) => m.id);
+}
 
-  // Fetch full message details in parallel; skip any that fail individually
-  const results = await Promise.allSettled(
-    ids.map((id) =>
-      fetch(`${GMAIL_BASE}/messages/${id}?format=full`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      }).then((r) => {
-        if (!r.ok) throw new Error(`Message ${id} fetch failed: ${r.status}`);
-        return r.json();
-      })
-    )
-  );
+export async function getGmailMessagesByIds(
+  accessToken: string,
+  ids: string[],
+  batchSize = 10
+): Promise<{ messages: GmailMessage[]; errors: Array<{ id: string; error: string }> }> {
+  if (!ids.length) return { messages: [], errors: [] };
 
-  return results
-    .filter((r): r is PromiseFulfilledResult<Record<string, unknown>> => r.status === "fulfilled")
-    .map((r) => parseMessage(r.value));
+  const messages: GmailMessage[] = [];
+  const errors: Array<{ id: string; error: string }> = [];
+
+  for (let i = 0; i < ids.length; i += batchSize) {
+    const batch = ids.slice(i, i + batchSize);
+    const results = await Promise.allSettled(
+      batch.map((id) =>
+        fetch(`${GMAIL_BASE}/messages/${id}?format=full`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }).then(async (r) => {
+          if (!r.ok) {
+            const errBody = await r.json().catch(() => ({}));
+            throw new Error(errBody?.error?.message ?? `Message ${id} fetch failed: ${r.status}`);
+          }
+          return r.json();
+        })
+      )
+    );
+
+    results.forEach((result, idx) => {
+      if (result.status === "fulfilled") {
+        messages.push(parseMessage(result.value as Record<string, unknown>));
+      } else {
+        errors.push({
+          id: batch[idx],
+          error: result.reason instanceof Error ? result.reason.message : "Message fetch failed",
+        });
+      }
+    });
+  }
+
+  return { messages, errors };
 }
 
 export async function getGmailThread(

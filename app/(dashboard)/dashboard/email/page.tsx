@@ -19,29 +19,37 @@ export default async function EmailPage({
   }
 
   const supabase = await createClient();
-
-  const [emails, taskSuggestions, projects, hasToneProfile, filterRaw, calendarToken, userEmail] =
-    await Promise.all([
-      getAllEmails(),
-      getPendingTaskSuggestions(),
-      getProjects(),
-      getSetting("gmail_tone_profile").then((v) => !!v),
-      getSetting("email_task_filter_addresses"),
-      getSetting("google_refresh_token"),
-      getSetting("gmail_user_email"),
-    ]);
+  const [
+    emails,
+    taskSuggestions,
+    projects,
+    hasToneProfile,
+    filterRaw,
+    calendarToken,
+    userEmail,
+    phasesResult,
+    tasksResult,
+  ] = await Promise.all([
+    getAllEmails(),
+    getPendingTaskSuggestions(),
+    getProjects(),
+    getSetting("gmail_tone_profile").then((v) => !!v),
+    getSetting("email_task_filter_addresses"),
+    getSetting("google_refresh_token"),
+    getSetting("gmail_user_email"),
+    supabase
+      .from("phases")
+      .select("id, name, project_id, status, start_date, end_date"),
+    supabase
+      .from("tasks")
+      .select("id, title, due_date, project_id")
+      .not("due_date", "is", null),
+  ]);
 
   const initialFilterAddresses: string[] = filterRaw ? JSON.parse(filterRaw) : [];
   const calendarConnected = !!calendarToken;
-
-  const { data: phases } = await supabase
-    .from("phases")
-    .select("id, name, project_id, status, start_date, end_date");
-
-  const { data: tasks } = await supabase
-    .from("tasks")
-    .select("id, title, due_date, project_id")
-    .not("due_date", "is", null);
+  const phases = phasesResult.data;
+  const tasks = tasksResult.data;
 
   return (
     <EmailClient
