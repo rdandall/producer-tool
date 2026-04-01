@@ -52,6 +52,7 @@ export function DictationPanel({
   const sessionInterimRef = useRef("");
   const formatAbortRef = useRef<AbortController | null>(null);
   const formatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const formatRunIdRef = useRef(0);
   const discardSessionRef = useRef(false);
   const didFinalizeSessionRef = useRef(false);
@@ -61,6 +62,8 @@ export function DictationPanel({
   const lastLiveRequestAtRef = useRef(0);
   const liveCooldownUntilRef = useRef(0);
   const lastCooldownToastAtRef = useRef(0);
+  const shouldKeepListeningRef = useRef(false);
+  const shouldFinalizeOnEndRef = useRef(false);
 
   useEffect(() => {
     const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition;
@@ -87,6 +90,13 @@ export function DictationPanel({
     }
   }, []);
 
+  const clearRestartTimer = useCallback(() => {
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
+  }, []);
+
   const cancelActiveFormat = useCallback((nextState: "idle" | "live" | "final" = "idle") => {
     formatRunIdRef.current += 1;
     formatAbortRef.current?.abort();
@@ -94,8 +104,9 @@ export function DictationPanel({
     activeFormatModeRef.current = null;
     queuedLiveDraftRef.current = "";
     cancelScheduledFormat();
+    clearRestartTimer();
     setFormattingState(nextState);
-  }, [cancelScheduledFormat]);
+  }, [cancelScheduledFormat, clearRestartTimer]);
 
   const combineNoteText = useCallback((prefix: string, dictatedText: string) => {
     const cleanDictatedText = dictatedText.trim();
@@ -356,24 +367,9 @@ export function DictationPanel({
     }
   }, [cancelScheduledFormat, getCurrentDraft, streamFormattedDraft]);
 
-  useEffect(() => {
-    return () => {
-      recognitionRef.current?.stop();
-      cancelActiveFormat();
-    };
-  }, [cancelActiveFormat]);
-
-  const startRecording = useCallback(() => {
+  const createRecognitionSession = useCallback(() => {
     const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition;
-    if (!SR) return;
-
-    cancelActiveFormat();
-    discardSessionRef.current = false;
-    didFinalizeSessionRef.current = false;
-    sessionPrefixRef.current = rawInput;
-    sessionRawFinalRef.current = "";
-    sessionInterimRef.current = "";
-    setInterimTranscript("");
+    if (!SR) return null;
 
     const recognition = new SR();
     recognition.continuous = true;
@@ -409,19 +405,96 @@ export function DictationPanel({
       scheduleLiveFormat(liveDraft);
     };
 
-    recognition.onerror = () => finalizeSession(true);
+    recognition.onerror = (event: AnySpeechRecognition) => {
+      if (event?.error === "aborted" || event?.error === "no-speech") {
+        return;
+      }
 
-    recognition.onend = () => finalizeSession(false);
+      shouldKeepListeningRef.current = false;
+      shouldFinalizeOnEndRef.current = true;
+      if (event?.error) {
+        toast.error(`Microphone error: ${event.error}`);
+      }
+    };
+
+    recognition.onend = () => {
+      recognitionRef.current = null;
+
+      if (discardSessionRef.current && !shouldFinalizeOnEndRef.current) {
+        clearRestartTimer();
+        setIsRecording(false);
+        setInterimTranscript("");
+        return;
+      }
+
+      if (shouldKeepListeningRef.current && !shouldFinalizeOnEndRef.current) {
+        clearRestartTimer();
+        restartTimerRef.current = setTimeout(() => {
+          restartTimerRef.current = null;
+          if (!shouldKeepListeningRef.current || shouldFinalizeOnEndRef.current) return;
+
+          const nextRecognition = createRecognitionSession();
+          if (!nextRecognition) return;
+
+          recognitionRef.current = nextRecognition;
+          try {
+            nextRecognition.start();
+          } catch (err) {
+            shouldKeepListeningRef.current = false;
+            shouldFinalizeOnEndRef.current = true;
+            toast.error(
+              err instanceof Error
+                ? `Microphone error: ${err.message}`
+                : "Microphone error: failed to restart dictation."
+            );
+            finalizeSession(false);
+          }
+        }, 250);
+        return;
+      }
+
+      finalizeSession(false);
+    };
+
+    return recognition;
+  }, [clearRestartTimer, combineNoteText, finalizeSession, getCurrentDraft, scheduleLiveFormat]);
+
+  useEffect(() => {
+    return () => {
+      shouldKeepListeningRef.current = false;
+      shouldFinalizeOnEndRef.current = false;
+      recognitionRef.current?.stop();
+      cancelActiveFormat();
+    };
+  }, [cancelActiveFormat]);
+
+  const startRecording = useCallback(() => {
+    cancelActiveFormat();
+    clearRestartTimer();
+    discardSessionRef.current = false;
+    didFinalizeSessionRef.current = false;
+    shouldKeepListeningRef.current = true;
+    shouldFinalizeOnEndRef.current = false;
+    sessionPrefixRef.current = rawInput;
+    sessionRawFinalRef.current = "";
+    sessionInterimRef.current = "";
+    setInterimTranscript("");
+
+    const recognition = createRecognitionSession();
+    if (!recognition) return;
 
     recognitionRef.current = recognition;
     recognition.start();
     setIsRecording(true);
-  }, [cancelActiveFormat, combineNoteText, finalizeSession, getCurrentDraft, rawInput, scheduleLiveFormat]);
+  }, [cancelActiveFormat, clearRestartTimer, createRecognitionSession, rawInput]);
 
   const stopRecording = useCallback(() => {
+    shouldKeepListeningRef.current = false;
+    shouldFinalizeOnEndRef.current = true;
+    clearRestartTimer();
     recognitionRef.current?.stop();
     setIsRecording(false);
-  }, []);
+  }, [clearRestartTimer]);
 
   function handleGenerate() {
     const combined = rawInput.trim();
@@ -431,6 +504,9 @@ export function DictationPanel({
 
   function handleClear() {
     discardSessionRef.current = true;
+    shouldKeepListeningRef.current = false;
+    shouldFinalizeOnEndRef.current = false;
+    clearRestartTimer();
     recognitionRef.current?.stop();
     cancelActiveFormat();
     setRawInput("");

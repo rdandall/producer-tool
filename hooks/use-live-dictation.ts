@@ -55,6 +55,7 @@ export function useLiveDictation({
   const formatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const formatRunIdRef = useRef(0);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const discardSessionRef = useRef(false);
   const didFinalizeSessionRef = useRef(false);
@@ -64,6 +65,8 @@ export function useLiveDictation({
   const lastLiveRequestAtRef = useRef(0);
   const liveCooldownUntilRef = useRef(0);
   const lastCooldownToastAtRef = useRef(0);
+  const shouldKeepListeningRef = useRef(false);
+  const shouldFinalizeOnEndRef = useRef(false);
 
   useEffect(() => {
     const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition;
@@ -86,6 +89,13 @@ export function useLiveDictation({
     }
   }, []);
 
+  const clearRestartTimer = useCallback(() => {
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
+  }, []);
+
   const cancelScheduledFormat = useCallback(() => {
     if (formatTimerRef.current) {
       clearTimeout(formatTimerRef.current);
@@ -101,8 +111,9 @@ export function useLiveDictation({
     queuedLiveDraftRef.current = "";
     cancelScheduledFormat();
     clearSilenceTimer();
+    clearRestartTimer();
     setFormattingState(nextState);
-  }, [cancelScheduledFormat, clearSilenceTimer]);
+  }, [cancelScheduledFormat, clearRestartTimer, clearSilenceTimer]);
 
   const combineText = useCallback((prefix: string, dictatedText: string) => {
     const cleanDictatedText = dictatedText.trim();
@@ -404,29 +415,22 @@ export function useLiveDictation({
     if (!silenceTimeoutMs || silenceTimeoutMs <= 0) return;
     clearSilenceTimer();
     silenceTimerRef.current = setTimeout(() => {
+      shouldKeepListeningRef.current = false;
+      shouldFinalizeOnEndRef.current = true;
       recognitionRef.current?.stop();
     }, silenceTimeoutMs);
   }, [clearSilenceTimer, silenceTimeoutMs]);
 
-  const startDictation = useCallback((options?: { prefix?: string }) => {
+  const createRecognitionSession = useCallback(() => {
     const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition;
     if (!SR) {
       const message = "Speech recognition is not supported in this browser.";
       setError(message);
       toast.error(message);
-      return;
+      shouldKeepListeningRef.current = false;
+      shouldFinalizeOnEndRef.current = false;
+      return null;
     }
-
-    cancelActiveFormat();
-    discardSessionRef.current = false;
-    didFinalizeSessionRef.current = false;
-    sessionPrefixRef.current = options?.prefix ?? valueRef.current;
-    sessionRawFinalRef.current = "";
-    sessionInterimRef.current = "";
-    sessionOnChangeRef.current = onChangeRef.current;
-    sessionOnFinalizedRef.current = onFinalizedRef.current;
-    sessionContextTypeRef.current = contextTypeRef.current;
-    setError(null);
 
     const recognition = new SR();
     recognition.continuous = true;
@@ -461,31 +465,64 @@ export function useLiveDictation({
     };
 
     recognition.onerror = (event: AnySpeechRecognition) => {
-      if (event?.error === "aborted") {
-        clearSilenceTimer();
-        setIsRecording(false);
-        setFormattingState("idle");
+      if (event?.error === "aborted" || event?.error === "no-speech") {
         return;
       }
 
-      if (event?.error === "not-allowed") {
+      shouldKeepListeningRef.current = false;
+      shouldFinalizeOnEndRef.current = true;
+
+      if (event?.error === "not-allowed" || event?.error === "service-not-allowed") {
         setError("Microphone access was denied. Check browser permissions and try again.");
-      } else if (event?.error && event.error !== "no-speech") {
+      } else if (event?.error) {
         setError(`Microphone error: ${event.error}`);
       }
-
-      finalizeSession(event?.error === "no-speech");
     };
 
-    recognition.onend = () => finalizeSession(false);
+    recognition.onend = () => {
+      recognitionRef.current = null;
 
-    recognitionRef.current = recognition;
-    recognition.start();
-    setIsRecording(true);
-    onRecordingStartRef.current?.();
+      if (discardSessionRef.current && !shouldFinalizeOnEndRef.current) {
+        clearSilenceTimer();
+        clearRestartTimer();
+        setIsRecording(false);
+        return;
+      }
+
+      if (shouldKeepListeningRef.current && !shouldFinalizeOnEndRef.current) {
+        clearRestartTimer();
+        restartTimerRef.current = setTimeout(() => {
+          restartTimerRef.current = null;
+          if (!shouldKeepListeningRef.current || shouldFinalizeOnEndRef.current) return;
+
+          const nextRecognition = createRecognitionSession();
+          if (!nextRecognition) return;
+
+          recognitionRef.current = nextRecognition;
+          try {
+            nextRecognition.start();
+            resetSilenceTimer();
+          } catch (err) {
+            shouldKeepListeningRef.current = false;
+            shouldFinalizeOnEndRef.current = true;
+            setError(
+              err instanceof Error
+                ? `Microphone error: ${err.message}`
+                : "Microphone error: failed to restart dictation."
+            );
+            finalizeSession(false);
+          }
+        }, 250);
+        return;
+      }
+
+      finalizeSession(false);
+    };
+
+    return recognition;
   }, [
     applyDraft,
-    cancelActiveFormat,
+    clearRestartTimer,
     clearSilenceTimer,
     finalizeSession,
     getCurrentDraft,
@@ -493,14 +530,51 @@ export function useLiveDictation({
     scheduleLiveFormat,
   ]);
 
+  const startDictation = useCallback((options?: { prefix?: string }) => {
+    cancelActiveFormat();
+    clearRestartTimer();
+    discardSessionRef.current = false;
+    didFinalizeSessionRef.current = false;
+    shouldKeepListeningRef.current = true;
+    shouldFinalizeOnEndRef.current = false;
+    sessionPrefixRef.current = options?.prefix ?? valueRef.current;
+    sessionRawFinalRef.current = "";
+    sessionInterimRef.current = "";
+    sessionOnChangeRef.current = onChangeRef.current;
+    sessionOnFinalizedRef.current = onFinalizedRef.current;
+    sessionContextTypeRef.current = contextTypeRef.current;
+    setError(null);
+
+    const recognition = createRecognitionSession();
+    if (!recognition) return;
+
+    recognitionRef.current = recognition;
+    recognition.start();
+    resetSilenceTimer();
+    setIsRecording(true);
+    onRecordingStartRef.current?.();
+  }, [
+    cancelActiveFormat,
+    clearRestartTimer,
+    createRecognitionSession,
+    resetSilenceTimer,
+  ]);
+
   const stopDictation = useCallback(() => {
     clearSilenceTimer();
+    clearRestartTimer();
+    shouldKeepListeningRef.current = false;
+    shouldFinalizeOnEndRef.current = true;
     recognitionRef.current?.stop();
     setIsRecording(false);
-  }, [clearSilenceTimer]);
+  }, [clearRestartTimer, clearSilenceTimer]);
 
   const cancelDictation = useCallback(() => {
     discardSessionRef.current = true;
+    shouldKeepListeningRef.current = false;
+    shouldFinalizeOnEndRef.current = false;
+    clearRestartTimer();
+    clearSilenceTimer();
     recognitionRef.current?.abort();
     sessionRawFinalRef.current = "";
     sessionInterimRef.current = "";
@@ -508,7 +582,7 @@ export function useLiveDictation({
     cancelActiveFormat();
     setIsRecording(false);
     onRecordingStopRef.current?.();
-  }, [cancelActiveFormat]);
+  }, [cancelActiveFormat, clearRestartTimer, clearSilenceTimer]);
 
   const toggleDictation = useCallback(() => {
     if (isRecording) {
@@ -520,6 +594,8 @@ export function useLiveDictation({
 
   useEffect(() => {
     return () => {
+      shouldKeepListeningRef.current = false;
+      shouldFinalizeOnEndRef.current = false;
       recognitionRef.current?.abort();
       cancelActiveFormat();
     };
