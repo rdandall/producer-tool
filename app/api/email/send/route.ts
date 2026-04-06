@@ -86,9 +86,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const token = await getValidGmailToken();
+    let token: string | null = null;
+    try {
+      token = await getValidGmailToken();
+    } catch (tokenErr) {
+      console.error("Gmail token refresh failed:", tokenErr);
+      return NextResponse.json(
+        { error: `Gmail token refresh failed: ${tokenErr instanceof Error ? tokenErr.message : "unknown error"}. Try reconnecting Gmail in Settings.` },
+        { status: 401 }
+      );
+    }
     if (!token) {
-      return NextResponse.json({ error: "Not connected to Gmail" }, { status: 401 });
+      return NextResponse.json({ error: "Not connected to Gmail. Connect in Settings first." }, { status: 401 });
     }
 
     const body = await parseJsonBody(req);

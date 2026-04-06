@@ -360,12 +360,23 @@ export function EmailComposePanel({
         }),
       });
 
-      const payload = await res.json().catch(() => ({})) as { error?: string };
-      if (!res.ok) throw new Error(payload.error ?? "Send failed");
+      let payload: { error?: string; success?: boolean } = {};
+      try {
+        payload = await res.json();
+      } catch {
+        // Response wasn't JSON — use status text
+      }
+      if (!res.ok) {
+        const detail = payload.error ?? `HTTP ${res.status}: ${res.statusText}`;
+        console.error("[PRDCR] Email send failed:", res.status, detail);
+        throw new Error(detail);
+      }
       toast.success(scheduledAt ? "Email scheduled" : "Sent");
       onSent();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to send.");
+      const msg = err instanceof Error ? err.message : "Failed to send.";
+      console.error("[PRDCR] Send error:", msg);
+      toast.error(msg);
     } finally {
       setIsSending(false);
     }

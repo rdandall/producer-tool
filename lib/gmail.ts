@@ -83,7 +83,11 @@ export async function refreshGmailToken(refreshToken: string): Promise<string> {
     }),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error_description ?? "Gmail token refresh failed");
+  if (!res.ok) {
+    const detail = data.error_description ?? data.error ?? "unknown";
+    console.error("[Gmail] Token refresh failed:", res.status, detail);
+    throw new Error(`Token refresh failed (${detail}). Reconnect Gmail in Settings.`);
+  }
   return data.access_token;
 }
 
@@ -450,7 +454,22 @@ export async function sendGmailReply(
   });
 
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error?.message ?? "Failed to send email");
+    let errMsg = `Gmail API ${res.status}`;
+    try {
+      const err = await res.json();
+      errMsg = err.error?.message ?? errMsg;
+      // Common Gmail errors with actionable messages
+      if (res.status === 403) {
+        errMsg = `Gmail permission denied: ${errMsg}. You may need to reconnect Gmail with send permissions.`;
+      } else if (res.status === 401) {
+        errMsg = `Gmail auth expired: ${errMsg}. Try reconnecting Gmail in Settings.`;
+      } else if (res.status === 429) {
+        errMsg = `Gmail rate limit hit. Wait a minute and try again.`;
+      }
+    } catch {
+      errMsg = `Gmail API error (HTTP ${res.status})`;
+    }
+    console.error("[Gmail sendGmailReply] Error:", errMsg);
+    throw new Error(errMsg);
   }
 }
