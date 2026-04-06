@@ -3,7 +3,9 @@ import { getProjects } from "@/lib/db/projects";
 import { getSetting } from "@/lib/db/settings";
 import { createClient } from "@/lib/supabase/server";
 import { EmailClient } from "@/components/email/email-client";
+import { MobileEmail } from "@/components/mobile/mobile-email";
 import { GmailConnect } from "@/components/email/gmail-connect";
+import { ResponsivePage } from "@/components/mobile/responsive-page";
 
 export default async function EmailPage({
   searchParams,
@@ -51,34 +53,57 @@ export default async function EmailPage({
   const phases = phasesResult.data;
   const tasks = tasksResult.data;
 
+  const projectsList = projects.map((p) => ({
+    id: p.id,
+    title: p.title,
+    client: p.client,
+    color: p.color,
+  }));
+
+  const phasesList = (phases ?? []).map((ph) => ({
+    id: ph.id,
+    name: ph.name,
+    project_id: ph.project_id,
+    status: ph.status,
+    start_date: ph.start_date ?? null,
+    end_date: ph.end_date ?? null,
+  }));
+
+  const tasksList = (tasks ?? []).map((t) => ({
+    id: t.id,
+    title: t.title,
+    due_date: t.due_date ?? null,
+    project_id: t.project_id ?? null,
+  }));
+
   return (
-    <EmailClient
-      initialEmails={emails}
-      initialTaskSuggestions={taskSuggestions}
-      projects={projects.map((p) => ({
-        id: p.id,
-        title: p.title,
-        client: p.client,
-        color: p.color,
-      }))}
-      phases={(phases ?? []).map((ph) => ({
-        id: ph.id,
-        name: ph.name,
-        project_id: ph.project_id,
-        status: ph.status,
-        start_date: ph.start_date ?? null,
-        end_date: ph.end_date ?? null,
-      }))}
-      tasks={(tasks ?? []).map((t) => ({
-        id: t.id,
-        title: t.title,
-        due_date: t.due_date ?? null,
-        project_id: t.project_id ?? null,
-      }))}
-      hasToneProfile={hasToneProfile}
-      initialFilterAddresses={initialFilterAddresses}
-      calendarConnected={calendarConnected}
-      userEmail={userEmail ?? ""}
+    <ResponsivePage
+      desktop={
+        <EmailClient
+          initialEmails={emails}
+          initialTaskSuggestions={taskSuggestions}
+          projects={projectsList}
+          phases={phasesList}
+          tasks={tasksList}
+          hasToneProfile={hasToneProfile}
+          initialFilterAddresses={initialFilterAddresses}
+          calendarConnected={calendarConnected}
+          userEmail={userEmail ?? ""}
+        />
+      }
+      mobile={
+        <MobileEmail
+          initialEmails={emails}
+          initialTaskSuggestions={taskSuggestions}
+          projects={projectsList}
+          phases={phasesList}
+          tasks={tasksList}
+          hasToneProfile={hasToneProfile}
+          initialFilterAddresses={initialFilterAddresses}
+          calendarConnected={calendarConnected}
+          userEmail={userEmail ?? ""}
+        />
+      }
     />
   );
 }

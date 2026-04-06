@@ -1,0 +1,296 @@
+"use client";
+
+import { motion } from "framer-motion";
+import Link from "next/link";
+import { cn } from "@/lib/utils";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  ArrowUpRight,
+  CheckCircle2,
+  Mail,
+  CalendarDays,
+  FolderKanban,
+  FileText,
+} from "lucide-react";
+import { STATUS_CONFIG } from "@/lib/mock-data";
+import { shortDate, formatDate, formatGreetingDate } from "@/lib/dates";
+import { TaskCheckbox } from "@/components/tasks/task-checkbox";
+import type { Project } from "@/lib/db/projects";
+import type { TaskWithProject } from "@/lib/db/tasks";
+
+const fadeUp = {
+  hidden: { opacity: 0, y: 12 },
+  visible: { opacity: 1, y: 0 },
+};
+
+const stagger = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.04 } },
+};
+
+const spring = { duration: 0.4, ease: [0.25, 0.1, 0.25, 1] as const };
+
+interface Props {
+  projects: Project[];
+  tasks: TaskWithProject[];
+}
+
+export function MobileDashboard({ projects, tasks }: Props) {
+  const now = new Date();
+  const hour = now.getHours();
+  const greeting =
+    hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  const dateLabel = formatGreetingDate();
+
+  const openTasks = tasks.filter((t) => !t.completed);
+  const highPriority = openTasks.filter((t) => t.priority === "high");
+
+  const todayStr = now.toDateString();
+  const todayTasks = openTasks.filter(
+    (t) => t.due_date && new Date(t.due_date).toDateString() === todayStr
+  );
+  const upcomingTasks = openTasks
+    .filter((t) => t.due_date && new Date(t.due_date) > now)
+    .sort((a, b) => new Date(a.due_date!).getTime() - new Date(b.due_date!).getTime())
+    .slice(0, 5);
+
+  const stats = [
+    { label: "Projects", value: projects.length, href: "/dashboard/projects" },
+    { label: "Open", value: openTasks.length, href: "/dashboard/tasks" },
+    { label: "Urgent", value: highPriority.length, href: "/dashboard/tasks" },
+  ];
+
+  const quickActions = [
+    { label: "Email", href: "/dashboard/email", icon: Mail, color: "text-blue-500" },
+    { label: "Calendar", href: "/dashboard/calendar", icon: CalendarDays, color: "text-emerald-500" },
+    { label: "Projects", href: "/dashboard/projects", icon: FolderKanban, color: "text-amber-500" },
+    { label: "Notes", href: "/dashboard/notes", icon: FileText, color: "text-purple-500" },
+  ];
+
+  return (
+    <div className="flex-1 overflow-auto">
+      <div className="px-5 pt-[max(1rem,env(safe-area-inset-top))] pb-6">
+        {/* ── Greeting ── */}
+        <motion.div
+          className="mb-5 pt-2"
+          initial="hidden"
+          animate="visible"
+          variants={fadeUp}
+          transition={spring}
+        >
+          <p className="text-[10px] uppercase tracking-[0.14em] font-semibold text-muted-foreground/50 mb-0.5">
+            {dateLabel}
+          </p>
+          <h1 className="text-xl font-black tracking-tight text-foreground">
+            {greeting}
+          </h1>
+        </motion.div>
+
+        {/* ── Stats row ── */}
+        <motion.div
+          className="flex gap-2.5 mb-5"
+          initial="hidden"
+          animate="visible"
+          variants={stagger}
+        >
+          {stats.map((stat) => (
+            <motion.div key={stat.label} variants={fadeUp} transition={spring} className="flex-1">
+              <Link href={stat.href}>
+                <Card className="overflow-hidden">
+                  <CardContent className="px-3 py-2.5">
+                    <p className="text-[9px] uppercase tracking-[0.12em] font-semibold text-muted-foreground/50 mb-0.5">
+                      {stat.label}
+                    </p>
+                    <p className="text-xl font-black tracking-tight text-foreground leading-none">
+                      {stat.value}
+                    </p>
+                  </CardContent>
+                </Card>
+              </Link>
+            </motion.div>
+          ))}
+        </motion.div>
+
+        {/* ── Quick actions grid ── */}
+        <motion.div
+          className="grid grid-cols-4 gap-2 mb-6"
+          initial="hidden"
+          animate="visible"
+          variants={stagger}
+        >
+          {quickActions.map((action) => {
+            const Icon = action.icon;
+            return (
+              <motion.div key={action.label} variants={fadeUp} transition={spring}>
+                <Link
+                  href={action.href}
+                  className="flex flex-col items-center gap-1.5 py-3 rounded-xl bg-card/30 backdrop-blur-sm border border-border/30 active:scale-95 transition-transform"
+                >
+                  <Icon className={cn("w-5 h-5", action.color)} />
+                  <span className="text-[10px] font-medium text-muted-foreground">
+                    {action.label}
+                  </span>
+                </Link>
+              </motion.div>
+            );
+          })}
+        </motion.div>
+
+        {/* ── Today's Tasks ── */}
+        <motion.div
+          className="mb-5"
+          initial="hidden"
+          animate="visible"
+          variants={stagger}
+        >
+          <motion.div variants={fadeUp} transition={spring}>
+            <div className="flex items-center justify-between mb-2.5">
+              <p className="text-[10px] uppercase tracking-[0.14em] font-semibold text-muted-foreground/50">
+                {todayTasks.length > 0
+                  ? `Today (${todayTasks.length})`
+                  : "Today"}
+              </p>
+              <Link
+                href="/dashboard/tasks"
+                className="flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-primary transition-colors"
+              >
+                All <ArrowUpRight className="w-3 h-3" />
+              </Link>
+            </div>
+          </motion.div>
+
+          {todayTasks.length > 0 ? (
+            <Card className="overflow-hidden">
+              <CardContent className="p-0">
+                {todayTasks.map((task, i) => (
+                  <motion.div key={task.id} variants={fadeUp} transition={spring}>
+                    <div
+                      className={cn(
+                        "flex items-center gap-3 px-4 py-3 active:bg-accent/20 transition-colors",
+                        i !== 0 && "border-t border-border/30"
+                      )}
+                    >
+                      <TaskCheckbox taskId={task.id} completed={task.completed} />
+                      {task.priority === "high" && (
+                        <div className="w-1.5 h-1.5 rounded-full bg-destructive shrink-0" />
+                      )}
+                      <p className="flex-1 text-[13px] font-medium text-foreground truncate">
+                        {task.title}
+                      </p>
+                      {task.projects && (
+                        <span
+                          className="text-[9px] font-medium px-1.5 py-0.5 shrink-0"
+                          style={{
+                            color: task.projects.color,
+                            backgroundColor: `${task.projects.color}15`,
+                          }}
+                        >
+                          {task.projects.client ?? task.projects.title}
+                        </span>
+                      )}
+                    </div>
+                  </motion.div>
+                ))}
+              </CardContent>
+            </Card>
+          ) : (
+            <motion.div variants={fadeUp} transition={spring}>
+              <Card>
+                <CardContent className="py-8 text-center">
+                  <CheckCircle2 className="w-7 h-7 text-primary/40 mx-auto mb-2" />
+                  <p className="text-[13px] font-semibold text-foreground mb-0.5">
+                    All clear
+                  </p>
+                  {upcomingTasks.length > 0 ? (
+                    <p className="text-[11px] text-muted-foreground">
+                      Next: <span className="font-medium text-foreground/80">{upcomingTasks[0].title}</span>
+                      {upcomingTasks[0].due_date && (
+                        <span className="text-muted-foreground/60"> · {formatDate(upcomingTasks[0].due_date)}</span>
+                      )}
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-muted-foreground">No upcoming tasks</p>
+                  )}
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
+        </motion.div>
+
+        {/* ── Active Projects ── */}
+        <motion.div
+          initial="hidden"
+          animate="visible"
+          variants={stagger}
+        >
+          <motion.div variants={fadeUp} transition={spring}>
+            <div className="flex items-center justify-between mb-2.5">
+              <p className="text-[10px] uppercase tracking-[0.14em] font-semibold text-muted-foreground/50">
+                Active Projects
+              </p>
+              <Link
+                href="/dashboard/projects"
+                className="flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-primary transition-colors"
+              >
+                All <ArrowUpRight className="w-3 h-3" />
+              </Link>
+            </div>
+          </motion.div>
+
+          <Card className="overflow-hidden">
+            <CardContent className="p-0">
+              {projects.slice(0, 5).map((project, i) => {
+                const status = STATUS_CONFIG[project.status];
+                return (
+                  <motion.div key={project.id} variants={fadeUp} transition={spring}>
+                    <Link href={`/dashboard/projects/${project.id}`}>
+                      <div
+                        className={cn(
+                          "flex items-center gap-3 px-4 py-3 active:bg-accent/20 transition-colors",
+                          i !== 0 && "border-t border-border/30"
+                        )}
+                      >
+                        <div
+                          className="w-1 h-7 rounded-sm shrink-0"
+                          style={{ backgroundColor: project.color }}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[13px] font-semibold text-foreground truncate">
+                            {project.title}
+                          </p>
+                          {project.client && (
+                            <p className="text-[10px] text-muted-foreground">
+                              {project.client}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {project.due_date && (
+                            <span className="text-[10px] text-muted-foreground tabular-nums">
+                              {shortDate(project.due_date)}
+                            </span>
+                          )}
+                          {status && (
+                            <span className={cn("status-pill text-[9px]", status.bg, status.color)}>
+                              <span className={cn("w-1.5 h-1.5 rounded-full", status.dot)} />
+                              {status.label}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </Link>
+                  </motion.div>
+                );
+              })}
+              {projects.length === 0 && (
+                <div className="px-4 py-8 text-center">
+                  <p className="text-[13px] text-muted-foreground">No projects yet.</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+      </div>
+    </div>
+  );
+}

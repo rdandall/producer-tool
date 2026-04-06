@@ -432,3 +432,85 @@ aside {
 .prose-notes .spacer {
   height: 0.5rem;
 }
+
+/* ─────────────────────────────────────────────────────────
+   MOBILE PWA STYLES
+   Standalone mode, safe areas, touch optimisations, and
+   iOS-specific fixes for the PRDCR mobile app experience.
+   ───────────────────────────────────────────────────────── */
+
+/* Safe area padding for standalone PWA (notch, home indicator) */
+@supports (padding: env(safe-area-inset-top)) {
+  .pwa-safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+  .pwa-safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Disable pull-to-refresh in standalone mode */
+@media (display-mode: standalone) {
+  html {
+    overscroll-behavior-y: contain;
+  }
+
+  /* Prevent text selection on interactive elements */
+  button, a, [role="button"] {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Prevent long-press context menus on touch targets */
+  button, a {
+    -webkit-touch-callout: none;
+  }
+
+  /* Smooth momentum scrolling */
+  [class*="overflow-auto"],
+  [class*="overflow-y-auto"],
+  [class*="overflow-x-auto"] {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Hide the scrollbar in mobile app */
+  ::-webkit-scrollbar {
+    display: none;
+  }
+  * {
+    scrollbar-width: none;
+  }
+}
+
+/* Active states for touch — make everything feel tappable */
+@media (hover: none) and (pointer: coarse) {
+  /* Larger touch targets */
+  button, a, [role="button"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Faster tap feedback */
+  button, a {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Disable hover animations on touch */
+  [data-slot="button"]:not(:disabled):hover {
+    transform: none;
+  }
+
+  /* Cards — no hover lift on touch */
+  [data-slot="card"]:hover {
+    transform: none !important;
+  }
+}
+
+/* Scrollbar hide utility */
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}

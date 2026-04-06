@@ -1,5 +1,7 @@
 import { getSetting } from "@/lib/db/settings";
 import { SettingsClient } from "@/components/settings/settings-client";
+import { MobileSettings } from "@/components/mobile/mobile-settings";
+import { ResponsivePage } from "@/components/mobile/responsive-page";
 
 export default async function SettingsPage() {
   const [
@@ -40,30 +42,42 @@ export default async function SettingsPage() {
   const emailTaskFilterAddresses: string[] = emailTaskFilterRaw ? JSON.parse(emailTaskFilterRaw) : [];
 
   return (
-    <div className="flex-1 overflow-y-auto">
-      <div className="p-6 max-w-2xl space-y-2">
-      <div className="mb-6">
-        <h1 className="text-xl font-bold tracking-tight">Settings</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Configure PRDCR to match your workflow.
-        </p>
-      </div>
+    <ResponsivePage
+      desktop={
+        <div className="flex-1 overflow-y-auto">
+          <div className="p-6 max-w-2xl space-y-2">
+          <div className="mb-6">
+            <h1 className="text-xl font-bold tracking-tight">Settings</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              Configure PRDCR to match your workflow.
+            </p>
+          </div>
 
-      <SettingsClient
-        sessionVersion={sessionVersion}
-        hasDbPassword={hasDbPassword}
-        gmailConnected={gmailConnected}
-        gmailEmail={gmailEmail ?? ""}
-        calendarConnected={calendarConnected}
-        hasToneProfile={hasToneProfile}
-        toneSampleCount={toneSampleCount}
-        styleNote={styleNote ?? ""}
-        emailSyncLimit={emailSyncLimit}
-        noteDefaultType={(noteDefaultType ?? "brief") as "brief" | "meeting-notes" | "project-notes" | "client-brief"}
-        emailFromAddress={emailFromAddress ?? ""}
-        emailTaskFilterAddresses={emailTaskFilterAddresses}
-      />
-      </div>
-    </div>
+          <SettingsClient
+            sessionVersion={sessionVersion}
+            hasDbPassword={hasDbPassword}
+            gmailConnected={gmailConnected}
+            gmailEmail={gmailEmail ?? ""}
+            calendarConnected={calendarConnected}
+            hasToneProfile={hasToneProfile}
+            toneSampleCount={toneSampleCount}
+            styleNote={styleNote ?? ""}
+            emailSyncLimit={emailSyncLimit}
+            noteDefaultType={(noteDefaultType ?? "brief") as "brief" | "meeting-notes" | "project-notes" | "client-brief"}
+            emailFromAddress={emailFromAddress ?? ""}
+            emailTaskFilterAddresses={emailTaskFilterAddresses}
+          />
+          </div>
+        </div>
+      }
+      mobile={
+        <MobileSettings
+          gmailConnected={gmailConnected}
+          gmailEmail={gmailEmail ?? ""}
+          calendarConnected={calendarConnected}
+          hasToneProfile={hasToneProfile}
+        />
+      }
+    />
   );
 }

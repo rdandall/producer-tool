@@ -1,6 +1,8 @@
 import { getAllClients } from "@/lib/db/clients";
 import { getProjects } from "@/lib/db/projects";
 import { ClientsClient } from "@/components/clients/clients-client";
+import { MobileClients } from "@/components/mobile/mobile-clients";
+import { ResponsivePage } from "@/components/mobile/responsive-page";
 
 export default async function ClientsPage() {
   const [clients, projects] = await Promise.all([
@@ -26,9 +28,19 @@ export default async function ClientsPage() {
     }));
 
   return (
-    <ClientsClient
-      clients={clients}
-      unassignedProjects={unassignedProjects}
+    <ResponsivePage
+      desktop={
+        <ClientsClient
+          clients={clients}
+          unassignedProjects={unassignedProjects}
+        />
+      }
+      mobile={
+        <MobileClients
+          clients={clients}
+          unassignedProjects={unassignedProjects}
+        />
+      }
     />
   );
 }

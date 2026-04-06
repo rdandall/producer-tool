@@ -5,8 +5,10 @@ import { Menu } from "lucide-react";
 import { Sidebar } from "@/components/layout/sidebar";
 import { CommandPalette } from "@/components/command-palette";
 import { GlobalAssistant } from "@/components/assistant/global-assistant";
+import { MobileShell } from "@/components/mobile/mobile-shell";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Toaster } from "sonner";
+import { useMobileDetect } from "@/hooks/use-mobile-detect";
 
 interface PaletteProject {
   id: string;
@@ -29,6 +31,7 @@ interface DashboardShellProps {
 }
 
 export function DashboardShell({ children, projects, tasks }: DashboardShellProps) {
+  const isMobile = useMobileDetect();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
@@ -45,6 +48,32 @@ export function DashboardShell({ children, projects, tasks }: DashboardShellProp
     });
   }
 
+  // ── Mobile app experience ──
+  if (isMobile) {
+    return (
+      <MobileShell>
+        {children}
+        <Toaster
+          position="top-center"
+          toastOptions={{
+            style: {
+              background: "oklch(1 0 0 / 0.85)",
+              backdropFilter: "blur(16px) saturate(180%)",
+              border: "1px solid oklch(0 0 0 / 0.08)",
+              fontSize: "13px",
+            },
+          }}
+        />
+      </MobileShell>
+    );
+  }
+
+  // ── Hydration: show nothing until detection resolves ──
+  if (isMobile === undefined) {
+    return null;
+  }
+
+  // ── Desktop experience (unchanged) ──
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar collapsed={collapsed} onToggleCollapse={toggleCollapsed} />
