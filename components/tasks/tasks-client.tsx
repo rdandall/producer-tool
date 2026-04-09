@@ -275,9 +275,9 @@ function TaskRow({
         </span>
       )}
 
-      {/* Project badge */}
+      {/* Project badge — hidden on very small screens to save space */}
       {task.projects && (
-        <div data-no-panel>
+        <div data-no-panel className="hidden sm:block">
           <Link href={`/dashboard/projects/${task.projects.id}`}>
             <span
               className="text-[11px] font-medium px-2 py-0.5 border transition-colors hover:opacity-80"
@@ -432,8 +432,8 @@ function BoardView({
   }));
 
   return (
-    <div className="flex-1 overflow-auto px-6 py-6">
-      <div className="flex gap-4 min-h-[calc(100vh-8rem)]">
+    <div className="flex-1 overflow-auto px-4 sm:px-6 py-4 sm:py-6">
+      <div className="flex gap-3 sm:gap-4 min-h-[calc(100vh-8rem)]">
         {columns.map((col) => (
           <div key={col.key} className="flex-1 min-w-[250px]">
             <div className="flex items-center gap-2 mb-4">

@@ -3,9 +3,7 @@ import { getProjects } from "@/lib/db/projects";
 import { getSetting } from "@/lib/db/settings";
 import { createClient } from "@/lib/supabase/server";
 import { EmailClient } from "@/components/email/email-client";
-import { MobileEmail } from "@/components/mobile/mobile-email";
 import { GmailConnect } from "@/components/email/gmail-connect";
-import { ResponsivePage } from "@/components/mobile/responsive-page";
 
 export default async function EmailPage({
   searchParams,
@@ -77,33 +75,16 @@ export default async function EmailPage({
   }));
 
   return (
-    <ResponsivePage
-      desktop={
-        <EmailClient
-          initialEmails={emails}
-          initialTaskSuggestions={taskSuggestions}
-          projects={projectsList}
-          phases={phasesList}
-          tasks={tasksList}
-          hasToneProfile={hasToneProfile}
-          initialFilterAddresses={initialFilterAddresses}
-          calendarConnected={calendarConnected}
-          userEmail={userEmail ?? ""}
-        />
-      }
-      mobile={
-        <MobileEmail
-          initialEmails={emails}
-          initialTaskSuggestions={taskSuggestions}
-          projects={projectsList}
-          phases={phasesList}
-          tasks={tasksList}
-          hasToneProfile={hasToneProfile}
-          initialFilterAddresses={initialFilterAddresses}
-          calendarConnected={calendarConnected}
-          userEmail={userEmail ?? ""}
-        />
-      }
+    <EmailClient
+      initialEmails={emails}
+      initialTaskSuggestions={taskSuggestions}
+      projects={projectsList}
+      phases={phasesList}
+      tasks={tasksList}
+      hasToneProfile={hasToneProfile}
+      initialFilterAddresses={initialFilterAddresses}
+      calendarConnected={calendarConnected}
+      userEmail={userEmail ?? ""}
     />
   );
 }

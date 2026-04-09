@@ -51,8 +51,11 @@ export function DashboardShell({ children, projects, tasks }: DashboardShellProp
   // ── Mobile app experience ──
   if (isMobile) {
     return (
-      <MobileShell>
-        {children}
+      <>
+        <MobileShell>
+          {children}
+        </MobileShell>
+        <GlobalAssistant projects={projects} />
         <Toaster
           position="top-center"
           toastOptions={{
@@ -64,7 +67,7 @@ export function DashboardShell({ children, projects, tasks }: DashboardShellProp
             },
           }}
         />
-      </MobileShell>
+      </>
     );
   }
 

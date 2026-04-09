@@ -269,7 +269,7 @@ export function GlobalAssistant({ projects }: GlobalAssistantProps) {
   const isPanelOpen = state === "confirming" || (state === "processing" && !action);
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-2.5">
+    <div className="fixed bottom-20 right-4 sm:bottom-6 sm:right-6 z-50 flex flex-col items-end gap-2.5">
       {/* Confirmation / input panel */}
       <AnimatePresence>
         {isPanelOpen && (
@@ -278,7 +278,7 @@ export function GlobalAssistant({ projects }: GlobalAssistantProps) {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 6, scale: 0.97 }}
             transition={{ duration: 0.16, ease: "easeOut" }}
-            className="w-[340px] bg-background/92 backdrop-blur-2xl border border-border/60 shadow-2xl"
+            className="w-[min(340px,calc(100vw-32px))] bg-background/92 backdrop-blur-2xl border border-border/60 shadow-2xl"
           >
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-2.5 border-b border-border/40">

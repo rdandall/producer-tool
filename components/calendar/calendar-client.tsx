@@ -633,9 +633,9 @@ export function CalendarClient() {
             <div className="border border-border overflow-hidden">
 
               {/* Month/week nav bar */}
-              <div className="flex items-center justify-between px-5 py-4 border-b border-border no-print">
-                <div className="flex items-center gap-3">
-                  <h2 className="text-base font-bold tracking-tight">
+              <div className="flex items-center justify-between px-3 sm:px-5 py-3 sm:py-4 border-b border-border no-print">
+                <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                  <h2 className="text-sm sm:text-base font-bold tracking-tight truncate">
                     {viewMode === "month"
                       ? <>{MONTH_NAMES[month]} <span className="text-muted-foreground/50 font-normal">{year}</span></>
                       : <>{fmtDateShort(toDateStr(weekDays[0]))} – {fmtDateShort(toDateStr(weekDays[6]))}, <span className="text-muted-foreground/50 font-normal">{weekDays[6].getFullYear()}</span></>
@@ -720,7 +720,7 @@ export function CalendarClient() {
 
                     if (!day) {
                       return (
-                        <div key={`empty-${i}`} className={cn("min-h-[130px] bg-accent/[0.03]", !isLastCol && "border-r border-border/30", !isLastRow && "border-b border-border/30")} />
+                        <div key={`empty-${i}`} className={cn("min-h-[80px] sm:min-h-[130px] bg-accent/[0.03]", !isLastCol && "border-r border-border/30", !isLastRow && "border-b border-border/30")} />
                       );
                     }
 
@@ -737,7 +737,7 @@ export function CalendarClient() {
                         key={dateStr}
                         onClick={() => selectDay(dateStr)}
                         className={cn(
-                          "min-h-[130px] p-2 text-left transition-colors focus:outline-none group relative",
+                          "min-h-[80px] sm:min-h-[130px] p-1 sm:p-2 text-left transition-colors focus:outline-none group relative",
                           !isLastCol && "border-r border-border/30",
                           !isLastRow && "border-b border-border/30",
                           isWeekend && !isSelected && "bg-accent/[0.04]",

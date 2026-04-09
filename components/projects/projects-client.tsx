@@ -103,8 +103,8 @@ export function ProjectsClient({ projects, clients = [] }: Props) {
           </span>
         </div>
         <div className="flex items-center gap-3">
-          {/* View toggle */}
-          <div className="flex items-center gap-0 border border-border">
+          {/* View toggle — hidden on mobile (grid forced) */}
+          <div className="hidden sm:flex items-center gap-0 border border-border">
             <button
               onClick={() => setViewMode("table")}
               className={cn(
@@ -156,12 +156,17 @@ export function ProjectsClient({ projects, clients = [] }: Props) {
         })}
       </div>
 
-      {/* Content */}
-      {view === "table" ? (
-        <TableView groups={groups} />
-      ) : (
+      {/* Content — force grid on small screens (table needs 640px+) */}
+      <div className="hidden sm:block">
+        {view === "table" ? (
+          <TableView groups={groups} />
+        ) : (
+          <GridView groups={groups} />
+        )}
+      </div>
+      <div className="sm:hidden">
         <GridView groups={groups} />
-      )}
+      </div>
     </div>
   );
 }

@@ -2,8 +2,6 @@ import { getAllNotes } from "@/lib/db/notes";
 import { getProjects } from "@/lib/db/projects";
 import { getSetting } from "@/lib/db/settings";
 import { NotesClient } from "@/components/notes/notes-client";
-import { MobileNotes } from "@/components/mobile/mobile-notes";
-import { ResponsivePage } from "@/components/mobile/responsive-page";
 import type { NoteType } from "@/lib/db/notes";
 
 export default async function NotesPage() {
@@ -20,21 +18,10 @@ export default async function NotesPage() {
   }));
 
   return (
-    <ResponsivePage
-      desktop={
-        <NotesClient
-          initialNotes={notes}
-          projects={projectsList}
-          defaultDocType={(defaultDocType as NoteType) ?? "brief"}
-        />
-      }
-      mobile={
-        <MobileNotes
-          initialNotes={notes}
-          projects={projectsList}
-          defaultDocType={(defaultDocType as NoteType) ?? "brief"}
-        />
-      }
+    <NotesClient
+      initialNotes={notes}
+      projects={projectsList}
+      defaultDocType={(defaultDocType as NoteType) ?? "brief"}
     />
   );
 }
