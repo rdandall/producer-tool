@@ -8,10 +8,15 @@ import { cn } from "@/lib/utils";
 import type { NoteType } from "@/lib/db/notes";
 
 const TYPE_OPTIONS: { value: NoteType; label: string; description: string }[] = [
-  { value: "brief",         label: "Edit Brief",     description: "Instructions for your editor" },
-  { value: "meeting-notes", label: "Meeting Notes",  description: "Call or meeting summary" },
-  { value: "project-notes", label: "Project Notes",  description: "General project notes" },
-  { value: "client-brief",  label: "Client Brief",   description: "Client-facing document" },
+  { value: "brief",          label: "Edit Brief",     description: "Instructions for your editor" },
+  { value: "meeting-notes",  label: "Meeting Notes",  description: "Call or meeting summary" },
+  { value: "project-notes",  label: "Project Notes",  description: "General project notes" },
+  { value: "client-brief",   label: "Client Brief",   description: "Client-facing document" },
+  { value: "note",           label: "Note",           description: "General-purpose note" },
+  { value: "quote",          label: "Quote",          description: "Quote or estimate" },
+  { value: "idea",           label: "Idea",           description: "Capture an idea" },
+  { value: "spec",           label: "Spec",           description: "Technical specification" },
+  { value: "project-update", label: "Project Update", description: "Status update for a project" },
 ];
 
 interface Props {

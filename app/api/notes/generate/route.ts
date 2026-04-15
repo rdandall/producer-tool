@@ -5,12 +5,22 @@ import { parseJsonBody, requireString, ValidationError } from "@/lib/validation"
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+// ── Doc type labels ───────────────────────────────────────────────────────────
+
 const DOC_TYPE_LABELS: Record<string, string> = {
-  "brief": "Edit Brief",
-  "meeting-notes": "Meeting / Call Notes",
-  "project-notes": "Project Notes",
-  "client-brief": "Client-Facing Brief",
+  "brief":          "Edit Brief",
+  "meeting-notes":  "Meeting / Call Notes",
+  "project-notes":  "Project Notes",
+  "client-brief":   "Client-Facing Brief",
+  "notes":          "Notes",
+  "note":           "General Note",
+  "quote":          "Quote / Estimate",
+  "idea":           "Idea",
+  "spec":           "Spec",
+  "project-update": "Project Update",
 };
+
+// ── Doc type structure templates ─────────────────────────────────────────────
 
 const DOC_TYPE_STRUCTURES: Record<string, string> = {
   brief: `# Edit Brief — {title}
@@ -85,7 +95,93 @@ const DOC_TYPE_STRUCTURES: Record<string, string> = {
 
 ## Next Steps
 [What happens next]`,
+
+  "notes": `# {title}
+
+[Clean, structured version of the notes]`,
+
+  "note": `# {title}
+
+[Clean version of the note]`,
+
+  "quote": `# Quote — {title}
+*Prepared by PRDCR*
+
+## Project Summary
+[Brief description of what's being quoted]
+
+## Scope of Work
+[Detailed list of what's included]
+
+## Investment
+[Cost breakdown — line items where possible]
+
+## Timeline
+[Estimated turnaround]
+
+## Terms
+[Payment terms, revision rounds, what's excluded]
+
+## Next Steps
+[How to approve / proceed]`,
+
+  "idea": `# {title}
+
+## The Idea
+[Core concept in plain terms]
+
+## Why It Works
+[What makes this compelling]
+
+## What It Would Look Like
+[Rough description of execution — format, tone, style]
+
+## Who It's For
+[Target audience or client fit]
+
+## What's Needed
+[Resources, people, gear, time]
+
+## Next Step
+[What to do to move this forward]`,
+
+  "spec": `# Spec: {title}
+
+## Overview
+[What this spec covers and why]
+
+## Goals
+[What this needs to achieve]
+
+## Technical Requirements
+[Specific parameters — format, codec, resolution, frame rate, etc.]
+
+## Deliverables
+[Exact file list with specs]
+
+## Notes
+[Anything else the team needs to know]`,
+
+  "project-update": `# Project Update — {title}
+*{date}*
+
+## Status
+[One-line summary: on track / at risk / blocked]
+
+## Progress This Week
+[What got done]
+
+## Next Steps
+[What happens next, who's responsible]
+
+## Blockers / Risks
+[Anything holding things up or that could go wrong]
+
+## Key Dates
+[Upcoming milestones]`,
 };
+
+// ── Route ─────────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   try {
@@ -102,17 +198,37 @@ export async function POST(req: NextRequest) {
     const type = requireString(body.type, "type", { required: false, maxLength: 32 }) || "project-notes";
     const projectContext = body.projectContext;
 
+    // Attachment context: text extracted from context/both-role attachments
+    const attachmentContextItems: Array<{ filename: string; text: string }> =
+      Array.isArray(body.attachmentContext) ? body.attachmentContext : [];
+
     const docTypeLabel = DOC_TYPE_LABELS[type] ?? "Document";
     const docStructure = DOC_TYPE_STRUCTURES[type] ?? DOC_TYPE_STRUCTURES["project-notes"];
     const today = new Date().toLocaleDateString("en-GB", {
       day: "numeric",
       month: "long",
-        year: "numeric",
+      year: "numeric",
     });
 
-    const projectInfo = typeof projectContext === "object" && projectContext
-      ? `\nProject context: "${(projectContext as { title?: string }).title ?? ""}"${(projectContext as { client?: string }).client ? ` for ${(projectContext as { client?: string }).client}` : ""}${(projectContext as { brief?: string }).brief ? `\nProject brief: ${(projectContext as { brief?: string }).brief}` : ""}`
-      : "";
+    const projectInfo =
+      typeof projectContext === "object" && projectContext
+        ? `\nProject context: "${(projectContext as { title?: string }).title ?? ""}"${
+            (projectContext as { client?: string }).client
+              ? ` for ${(projectContext as { client?: string }).client}`
+              : ""
+          }${
+            (projectContext as { brief?: string }).brief
+              ? `\nProject brief: ${(projectContext as { brief?: string }).brief}`
+              : ""
+          }`
+        : "";
+
+    const attachmentInfo =
+      attachmentContextItems.length > 0
+        ? `\n\nAttached reference material (use as context when generating the document):\n${attachmentContextItems
+            .map((a) => `--- ${a.filename} ---\n${a.text.slice(0, 3000)}`)
+            .join("\n\n")}`
+        : "";
 
     const systemPrompt = `You are a production assistant for PRDCR, a professional video production company. You transform raw voice dictation and rough notes into clean, structured documents.
 
@@ -125,20 +241,6 @@ Your job:
 3. Extract any action items or tasks (things like "tell James to...", "ask Layla...", "I need to...", "remind me to...", "make sure...")
 4. For each extracted task, identify: who it's assigned to (if mentioned), estimated priority, and any due date hint
 
-You MUST respond with valid JSON in this exact structure:
-{
-  "title": "short descriptive title for this document (not generic)",
-  "content": "full markdown content of the document",
-  "extractedTasks": [
-    {
-      "title": "concise task title",
-      "assignedTo": "person name or null",
-      "priority": "high|medium|low",
-      "dueHint": "date hint string or null"
-    }
-  ]
-}
-
 Document structure to follow:
 ${docStructure}
 
@@ -148,7 +250,12 @@ Rules:
 - Remove filler words, false starts, repetition from dictation
 - Tasks in extractedTasks should NOT also appear in the document content — they're handled separately
 - If no tasks are detected, extractedTasks should be an empty array
-- Keep the document professional but not stiff`;
+- Keep the document professional but not stiff
+- If attached reference material is provided, incorporate relevant details naturally into the document`;
+
+    const userContent = attachmentInfo
+      ? `${rawInput}\n${attachmentInfo}`
+      : rawInput;
 
     const message = await client.messages.create({
       model: "claude-sonnet-4-6",
@@ -181,7 +288,7 @@ Rules:
         },
       ],
       tool_choice: { type: "tool", name: "generate_document" },
-      messages: [{ role: "user", content: rawInput }],
+      messages: [{ role: "user", content: userContent }],
       system: systemPrompt,
     });
 
@@ -192,7 +299,12 @@ Rules:
     const parsed = toolUse.input as {
       title: string;
       content: string;
-      extractedTasks: Array<{ title: string; assignedTo?: string; priority: string; dueHint?: string }>;
+      extractedTasks: Array<{
+        title: string;
+        assignedTo?: string;
+        priority: string;
+        dueHint?: string;
+      }>;
     };
 
     return NextResponse.json({

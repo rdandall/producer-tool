@@ -9,8 +9,8 @@ import { NotesListPanel } from "./notes-list-panel";
 import { DictationPanel } from "./dictation-panel";
 import { DocumentEditor } from "./document-editor";
 import { SendPanel } from "./send-panel";
-import { createNoteAction, updateNoteAction } from "@/app/actions";
-import type { Note, NoteType, NoteLink, ExtractedTask } from "@/lib/db/notes";
+import { createNoteAction, updateNoteAction, createNoteVersionAction } from "@/app/actions";
+import type { Note, NoteType, NoteLink, ExtractedTask, NoteAttachment, NoteStatus } from "@/lib/db/notes";
 
 interface Project {
   id: string;
@@ -27,25 +27,26 @@ interface Props {
 type EditorState = "idle" | "generating" | "ready";
 
 export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }: Props) {
-  const [notes, setNotes] = useState<Note[]>(initialNotes);
-  const [selectedNote, setSelectedNote] = useState<Note | null>(null);
-  const [editorState, setEditorState] = useState<EditorState>("idle");
-  const [isSaving, setIsSaving] = useState(false);
+  const [notes,            setNotes]            = useState<Note[]>(initialNotes);
+  const [selectedNote,     setSelectedNote]     = useState<Note | null>(null);
+  const [editorState,      setEditorState]      = useState<EditorState>("idle");
+  const [isSaving,         setIsSaving]         = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
 
-  // The current document state (might not be saved yet)
-  const [currentContent, setCurrentContent] = useState("");
-  const [currentTitle, setCurrentTitle] = useState("");
-  const [currentLinks, setCurrentLinks] = useState<NoteLink[]>([]);
+  // Current document state
+  const [currentContent,        setCurrentContent]        = useState("");
+  const [currentTitle,          setCurrentTitle]          = useState("");
+  const [currentLinks,          setCurrentLinks]          = useState<NoteLink[]>([]);
   const [currentExtractedTasks, setCurrentExtractedTasks] = useState<ExtractedTask[]>([]);
-  const [currentNoteId, setCurrentNoteId] = useState<string | null>(null);
+  const [currentNoteId,         setCurrentNoteId]         = useState<string | null>(null);
+  const [currentStatus,         setCurrentStatus]         = useState<NoteStatus>("draft");
+  const [currentAttachments,    setCurrentAttachments]    = useState<NoteAttachment[]>([]);
 
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Mobile panel navigation: "list" | "editor" | "send"
+  // Mobile panel navigation
   const [mobilePanelView, setMobilePanelView] = useState<"list" | "editor" | "send">("list");
 
-  // ── New blank note ──────────────────────────────────────────────────────
+  // ── New blank note ─────────────────────────────────────────────────────────
   function handleNew() {
     setSelectedNote(null);
     setCurrentNoteId(null);
@@ -53,11 +54,13 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
     setCurrentTitle("");
     setCurrentLinks([]);
     setCurrentExtractedTasks([]);
+    setCurrentStatus("draft");
+    setCurrentAttachments([]);
     setEditorState("idle");
     setMobilePanelView("editor");
   }
 
-  // ── Select existing note ────────────────────────────────────────────────
+  // ── Select existing note ───────────────────────────────────────────────────
   function handleSelectNote(note: Note) {
     setSelectedNote(note);
     setCurrentNoteId(note.id);
@@ -66,18 +69,34 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
     setCurrentLinks(note.links ?? []);
     setCurrentExtractedTasks(note.extracted_tasks ?? []);
     setSelectedProjectId(note.project_id);
+    setCurrentStatus(note.status ?? "draft");
+    setCurrentAttachments(note.attachments ?? []);
     setEditorState(note.content ? "ready" : "idle");
     setMobilePanelView("editor");
+
+    // Lazy-load attachments for existing notes
+    if (note.id) {
+      fetch(`/api/notes/attachments?noteId=${note.id}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: { attachments?: NoteAttachment[] } | null) => {
+          if (data?.attachments) setCurrentAttachments(data.attachments);
+        })
+        .catch(() => {/* non-fatal */});
+    }
   }
 
-  // ── AI Generate ─────────────────────────────────────────────────────────
+  // ── AI Generate ────────────────────────────────────────────────────────────
   const handleGenerate = useCallback(async (rawInput: string, type: NoteType) => {
     setEditorState("generating");
 
-    // Build project context if a project is selected
     const projectContext = selectedProjectId
       ? projects.find((p) => p.id === selectedProjectId)
       : null;
+
+    // Build attachment context: text from context/both-role attachments
+    const attachmentContext = currentAttachments
+      .filter((a) => (a.role === "context" || a.role === "both") && a.extracted_text)
+      .map((a) => ({ filename: a.filename, text: a.extracted_text! }));
 
     try {
       const res = await fetch("/api/notes/generate", {
@@ -89,19 +108,25 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
           projectContext: projectContext
             ? { title: projectContext.title, client: projectContext.client }
             : undefined,
+          attachmentContext: attachmentContext.length > 0 ? attachmentContext : undefined,
         }),
       });
 
       if (!res.ok) {
-        const err = await res.json();
+        const err = await res.json() as { error?: string };
         throw new Error(err.error ?? "Generation failed");
       }
 
-      const { title, content, extractedTasks } = await res.json();
+      const { title, content, extractedTasks } = await res.json() as {
+        title: string;
+        content: string;
+        extractedTasks: ExtractedTask[];
+      };
 
       setCurrentTitle(title);
       setCurrentContent(content);
       setCurrentExtractedTasks(extractedTasks ?? []);
+      setCurrentStatus("draft");
       setEditorState("ready");
 
       // Save to DB
@@ -111,8 +136,12 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
         raw_input: rawInput,
         content,
         project_id: selectedProjectId,
+        status: "draft",
       });
       setCurrentNoteId(noteId);
+
+      // Re-associate existing attachments to the new note (if any were uploaded pre-generate)
+      // (Currently attachments are uploaded after note exists, so this is future-proofing)
 
       // Update local notes list
       const newNote: Note = {
@@ -124,11 +153,14 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
         project_id: selectedProjectId,
         links: [],
         extracted_tasks: extractedTasks ?? [],
+        status: "draft",
+        last_output_type: null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         projects: projectContext
           ? { id: projectContext.id, title: projectContext.title, client: projectContext.client, color: "#3b82f6" }
           : null,
+        attachments: [],
       };
       setNotes((prev) => [newNote, ...prev]);
       setSelectedNote(newNote);
@@ -145,9 +177,9 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
       toast.error(err instanceof Error ? err.message : "Generation failed");
       setEditorState("idle");
     }
-  }, [selectedProjectId, projects]);
+  }, [selectedProjectId, projects, currentAttachments]);
 
-  // ── Save content changes (debounced) ────────────────────────────────────
+  // ── Save content (debounced) ───────────────────────────────────────────────
   async function handleContentChange(content: string) {
     setCurrentContent(content);
     if (!currentNoteId) return;
@@ -156,33 +188,69 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
     setIsSaving(true);
     saveTimeout.current = setTimeout(async () => {
       try {
-        await updateNoteAction(currentNoteId, { content });
+        await updateNoteAction(currentNoteId, { content, status: "saved" });
+        setCurrentStatus("saved");
         setNotes((prev) =>
           prev.map((n) =>
             n.id === currentNoteId
-              ? { ...n, content, updated_at: new Date().toISOString() }
+              ? { ...n, content, status: "saved", updated_at: new Date().toISOString() }
               : n
           )
         );
+        // Create a snapshot on manual save
+        void createNoteVersionAction(currentNoteId, currentTitle, content, "manual-save");
       } finally {
         setIsSaving(false);
       }
     }, 800);
   }
 
-  // ── Save links ───────────────────────────────────────────────────────────
+  // ── Save links ─────────────────────────────────────────────────────────────
   async function handleLinksChange(links: NoteLink[]) {
     setCurrentLinks(links);
     if (!currentNoteId) return;
     try {
       await updateNoteAction(currentNoteId, { links });
       setNotes((prev) =>
-        prev.map((n) =>
-          n.id === currentNoteId ? { ...n, links } : n
-        )
+        prev.map((n) => n.id === currentNoteId ? { ...n, links } : n)
       );
     } catch {
       toast.error("Failed to save links");
+    }
+  }
+
+  // ── Status change (from send panel) ───────────────────────────────────────
+  async function handleStatusChange(status: NoteStatus) {
+    setCurrentStatus(status);
+    if (!currentNoteId) return;
+
+    const outputType: "email" | "pdf" | "docx" | null =
+      status === "sent" ? "email" : null;
+
+    try {
+      await updateNoteAction(currentNoteId, {
+        status,
+        ...(outputType ? { last_output_type: outputType } : {}),
+      });
+      setNotes((prev) =>
+        prev.map((n) =>
+          n.id === currentNoteId
+            ? { ...n, status, updated_at: new Date().toISOString() }
+            : n
+        )
+      );
+
+      // Create version snapshot on send/export
+      if (status === "sent" || status === "saved") {
+        void createNoteVersionAction(
+          currentNoteId,
+          currentTitle,
+          currentContent,
+          status === "sent" ? "send" : "export"
+        );
+      }
+    } catch {
+      // Non-fatal — status updates are best-effort
     }
   }
 
@@ -190,7 +258,7 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
 
   return (
     <div className="flex-1 flex overflow-hidden">
-      {/* Left panel: notes list — hidden on mobile when in editor/send view */}
+      {/* Left panel: notes list */}
       <div className={cn(
         "flex-1 md:flex-none overflow-hidden",
         mobilePanelView !== "list" ? "hidden md:flex" : "flex"
@@ -200,17 +268,28 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
           selectedId={currentNoteId}
           onSelect={handleSelectNote}
           onNew={handleNew}
+          onSearchResults={(results) => {
+            // When search returns results, update the displayed list
+            // (does not replace the full notes array — only list display)
+            setNotes((prev) => {
+              // Merge: keep any notes not in results that might be locally mutated
+              const resultIds = new Set(results.map((r) => r.id));
+              const local     = prev.filter((n) => !resultIds.has(n.id));
+              return [...results, ...local].sort(
+                (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+              );
+            });
+          }}
         />
       </div>
 
-      {/* Center: dictation + editor — hidden on mobile when showing list or send panel */}
+      {/* Center: dictation + editor */}
       <div className={cn(
         "flex-1 flex flex-col overflow-hidden min-w-0",
         mobilePanelView === "editor" ? "flex" : "hidden md:flex"
       )}>
         {/* Header */}
         <div className="flex items-center justify-between px-4 sm:px-6 h-14 border-b border-border shrink-0">
-          {/* Mobile: back to list */}
           <button
             onClick={() => setMobilePanelView("list")}
             className="md:hidden flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors shrink-0"
@@ -218,19 +297,16 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
             <ChevronLeft className="w-4 h-4" />
             Notes
           </button>
-          {/* Desktop: title */}
           <div className="hidden md:flex items-center gap-3">
             <FileText className="w-4 h-4 text-primary" />
             <h1 className="text-sm font-semibold text-foreground truncate">
               {currentTitle || "Notes & Briefs"}
             </h1>
           </div>
-          {/* Mobile: title centered */}
           <h1 className="md:hidden text-sm font-semibold text-foreground truncate flex-1 text-center px-2">
             {currentTitle || "Notes & Briefs"}
           </h1>
           <div className="flex items-center gap-1.5">
-            {/* Mobile: Actions button when send panel is available */}
             {showRightPanel && (
               <button
                 onClick={() => setMobilePanelView("send")}
@@ -250,7 +326,7 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
           </div>
         </div>
 
-        {/* Dictation panel — always visible */}
+        {/* Dictation panel */}
         <DictationPanel
           onGenerate={handleGenerate}
           isGenerating={editorState === "generating"}
@@ -278,6 +354,9 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
                   <p className="text-sm font-medium text-foreground">Generating your document…</p>
                   <p className="text-xs text-muted-foreground/50 mt-1">
                     Claude is structuring your notes
+                    {currentAttachments.some((a) => a.role !== "delivery" && a.extracted_text)
+                      ? " + reading your attachments"
+                      : ""}
                   </p>
                 </div>
                 <div className="flex gap-1.5 mt-2">
@@ -297,6 +376,7 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
                 content={currentContent}
                 onChange={handleContentChange}
                 isSaving={isSaving}
+                status={currentStatus}
               />
             ) : notes.length === 0 ? (
               <motion.div
@@ -334,8 +414,7 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
         </div>
       </div>
 
-      {/* Right panel: export, links, email, tasks */}
-      {/* On mobile: shown as full-width when mobilePanelView === "send" */}
+      {/* Right panel: attachments, export, links, email, tasks */}
       <AnimatePresence>
         {(editorState === "ready" || showRightPanel) && (
           <motion.div
@@ -367,8 +446,11 @@ export function NotesClient({ initialNotes, projects, defaultDocType = "brief" }
                 links={currentLinks}
                 extractedTasks={currentExtractedTasks}
                 onLinksChange={handleLinksChange}
+                onStatusChange={handleStatusChange}
                 projects={projects}
                 selectedProjectId={selectedProjectId}
+                attachments={currentAttachments}
+                onAttachmentsChange={setCurrentAttachments}
               />
             </div>
           </motion.div>

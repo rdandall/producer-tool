@@ -4,14 +4,15 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Link2, Plus, Trash2, CheckSquare,
-  ChevronDown, ChevronUp, ExternalLink, Send, FileText, FileType,
+  ChevronDown, ChevronUp, ExternalLink, Send, FileText, FileType, Paperclip,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createTaskAction } from "@/app/actions";
 import { toast } from "sonner";
-import type { NoteLink, ExtractedTask } from "@/lib/db/notes";
+import type { NoteLink, ExtractedTask, NoteAttachment, NoteStatus } from "@/lib/db/notes";
 import { ContactAutocomplete, type Contact } from "./contact-autocomplete";
 import { useLiveDictation } from "@/hooks/use-live-dictation";
+import { AttachmentsSection } from "./attachments-section";
 
 interface Props {
   noteId: string;
@@ -20,11 +21,14 @@ interface Props {
   links: NoteLink[];
   extractedTasks: ExtractedTask[];
   onLinksChange: (links: NoteLink[]) => void;
+  onStatusChange?: (status: NoteStatus) => void;
   projects: { id: string; title: string; client: string | null }[];
   selectedProjectId: string | null;
+  attachments: NoteAttachment[];
+  onAttachmentsChange: (attachments: NoteAttachment[]) => void;
 }
 
-type Section = "export" | "links" | "email" | "tasks";
+type Section = "attachments" | "export" | "links" | "email" | "tasks";
 
 export function SendPanel({
   noteId,
@@ -33,10 +37,12 @@ export function SendPanel({
   links,
   extractedTasks,
   onLinksChange,
+  onStatusChange,
   projects,
   selectedProjectId,
+  attachments,
+  onAttachmentsChange,
 }: Props) {
-  void noteId;
   void projects;
 
   const [openSections, setOpenSections] = useState<Set<Section>>(
@@ -46,10 +52,10 @@ export function SendPanel({
 
   // Email state
   const [emailRecipients, setEmailRecipients] = useState<Contact[]>([]);
-  const [emailSubject, setEmailSubject] = useState("");
-  const [emailNote, setEmailNote] = useState("");
-  const [isSendingEmail, setIsSendingEmail] = useState(false);
-  const [emailSent, setEmailSent] = useState(false);
+  const [emailSubject,    setEmailSubject]    = useState("");
+  const [emailNote,       setEmailNote]       = useState("");
+  const [isSendingEmail,  setIsSendingEmail]  = useState(false);
+  const [emailSent,       setEmailSent]       = useState(false);
   const {
     cancelDictation,
     isFinalizing,
@@ -65,18 +71,17 @@ export function SendPanel({
 
   // Link state
   const [newLinkLabel, setNewLinkLabel] = useState("");
-  const [newLinkUrl, setNewLinkUrl] = useState("");
-  const [addingLink, setAddingLink] = useState(false);
+  const [newLinkUrl,   setNewLinkUrl]   = useState("");
+  const [addingLink,   setAddingLink]   = useState(false);
 
   // Task state
-  const [pushedTaskIds, setPushedTaskIds] = useState<Set<number>>(new Set());
+  const [pushedTaskIds,  setPushedTaskIds]  = useState<Set<number>>(new Set());
   const [pushingTaskIdx, setPushingTaskIdx] = useState<number | null>(null);
 
   function toggleSection(section: Section) {
     if (section === "email" && openSections.has("email")) {
       cancelDictation();
     }
-
     setOpenSections((prev) => {
       const next = new Set(prev);
       if (next.has(section)) next.delete(section);
@@ -85,7 +90,7 @@ export function SendPanel({
     });
   }
 
-  // ── Export ──────────────────────────────────────────────────────────────
+  // ── Export ────────────────────────────────────────────────────────────────
   async function handleExport(format: "pdf" | "docx") {
     if (!content || isExporting) return;
     setIsExporting(format);
@@ -93,21 +98,29 @@ export function SendPanel({
       const res = await fetch("/api/notes/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content, title, format, links }),
+        body: JSON.stringify({ content, title, format, links, noteId }),
       });
 
       if (!res.ok) throw new Error("Export failed");
 
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
       a.download = format === "pdf"
         ? `${title?.replace(/[^a-z0-9]/gi, "-") ?? "document"}.html`
         : `${title?.replace(/[^a-z0-9]/gi, "-") ?? "document"}.docx`;
       a.click();
       URL.revokeObjectURL(url);
-      toast.success(format === "pdf" ? "HTML exported — open in browser and print to PDF" : "Word document downloaded");
+
+      // Mark status as saved after first export (if not already sent)
+      onStatusChange?.("saved");
+
+      toast.success(
+        format === "pdf"
+          ? "HTML exported — open in browser and print to PDF"
+          : "Word document downloaded"
+      );
     } catch {
       toast.error("Export failed");
     } finally {
@@ -115,7 +128,7 @@ export function SendPanel({
     }
   }
 
-  // ── Links ───────────────────────────────────────────────────────────────
+  // ── Links ─────────────────────────────────────────────────────────────────
   function addLink() {
     if (!newLinkUrl.trim()) return;
     const updated = [
@@ -132,10 +145,16 @@ export function SendPanel({
     onLinksChange(links.filter((_, i) => i !== idx));
   }
 
-  // ── Email ───────────────────────────────────────────────────────────────
+  // ── Email ─────────────────────────────────────────────────────────────────
   async function sendEmail() {
     if (emailRecipients.length === 0 || !content || isSendingEmail) return;
     setIsSendingEmail(true);
+
+    // Only pass delivery/both attachment IDs
+    const deliveryAttachmentIds = attachments
+      .filter((a) => a.role === "delivery" || a.role === "both")
+      .map((a) => a.id);
+
     try {
       const toAddresses = emailRecipients.map((c) => c.email);
       const res = await fetch("/api/notes/email", {
@@ -148,13 +167,18 @@ export function SendPanel({
           title,
           links,
           personalNote: emailNote.trim(),
+          noteId,
+          attachmentIds: deliveryAttachmentIds,
         }),
       });
       if (!res.ok) {
-        const err = await res.json();
+        const err = await res.json() as { error?: string };
         throw new Error(err.error ?? "Send failed");
       }
+
       setEmailSent(true);
+      onStatusChange?.("sent");
+
       const label = toAddresses.length === 1 ? toAddresses[0] : `${toAddresses.length} recipients`;
       toast.success(`Sent to ${label}`);
       setTimeout(() => setEmailSent(false), 4000);
@@ -165,17 +189,15 @@ export function SendPanel({
     }
   }
 
-  // ── Push task to Tasks section ────────────────────────────────────────
+  // ── Push task ─────────────────────────────────────────────────────────────
   async function pushTask(task: ExtractedTask, idx: number) {
     if (pushedTaskIds.has(idx) || pushingTaskIdx === idx) return;
     setPushingTaskIdx(idx);
     try {
       const fd = new FormData();
-      fd.set("title", task.title);
+      fd.set("title",    task.title);
       fd.set("priority", task.priority);
-      if (task.assignedTo) fd.set("assigned_to", task.assignedTo); // not in FormData signature, handled by updateTask
       if (selectedProjectId) fd.set("project_id", selectedProjectId);
-      // Due date: parse hint
       if (task.dueHint) {
         const lower = task.dueHint.toLowerCase();
         if (lower.includes("today")) {
@@ -207,10 +229,33 @@ export function SendPanel({
     }
   }
 
-  const hasContent = !!content;
+  const hasContent        = !!content;
+  const deliveryCount     = attachments.filter((a) => a.role === "delivery" || a.role === "both").length;
+  const hasAttachments    = attachments.length > 0;
 
   return (
     <div className="w-full md:w-72 shrink-0 border-l border-border overflow-auto">
+
+      {/* Attachments Section */}
+      <SectionHeader
+        title={`Attachments${hasAttachments ? ` (${attachments.length})` : ""}`}
+        section="attachments"
+        isOpen={openSections.has("attachments")}
+        onToggle={toggleSection}
+        icon={<Paperclip className="w-3 h-3" />}
+      />
+      <AnimatePresence initial={false}>
+        {openSections.has("attachments") && (
+          <SectionBody noPadding>
+            <AttachmentsSection
+              noteId={noteId}
+              attachments={attachments}
+              onAttachmentsChange={onAttachmentsChange}
+            />
+          </SectionBody>
+        )}
+      </AnimatePresence>
+
       {/* Export Section */}
       <SectionHeader
         title="Export"
@@ -274,22 +319,14 @@ export function SendPanel({
       <AnimatePresence initial={false}>
         {openSections.has("links") && (
           <SectionBody>
-            {/* Existing links */}
             {links.length > 0 && (
               <div className="flex flex-col gap-1 mb-3">
                 {links.map((link, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center gap-2 group border border-border/40 px-2.5 py-1.5"
-                  >
+                  <div key={idx} className="flex items-center gap-2 group border border-border/40 px-2.5 py-1.5">
                     <Link2 className="w-3 h-3 text-muted-foreground/40 shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <p className="text-[11px] font-medium text-foreground truncate">
-                        {link.label}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground/40 truncate">
-                        {link.url}
-                      </p>
+                      <p className="text-[11px] font-medium text-foreground truncate">{link.label}</p>
+                      <p className="text-[10px] text-muted-foreground/40 truncate">{link.url}</p>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <a
@@ -313,7 +350,6 @@ export function SendPanel({
               </div>
             )}
 
-            {/* Add link form */}
             <AnimatePresence>
               {addingLink ? (
                 <motion.div
@@ -430,6 +466,14 @@ export function SendPanel({
                 />
               </div>
 
+              {/* Attachment summary for email */}
+              {deliveryCount > 0 && (
+                <p className="text-[10px] text-muted-foreground/50">
+                  {deliveryCount} attachment{deliveryCount > 1 ? "s" : ""} will be included
+                  {deliveryCount > 1 ? " (large files sent as links)" : ""}
+                </p>
+              )}
+
               <button
                 onClick={sendEmail}
                 disabled={emailRecipients.length === 0 || !hasContent || isSendingEmail || emailSent}
@@ -468,17 +512,14 @@ export function SendPanel({
                 </p>
                 <div className="flex flex-col gap-2">
                   {extractedTasks.map((task, idx) => {
-                    const isPushed = pushedTaskIds.has(idx);
+                    const isPushed  = pushedTaskIds.has(idx);
                     const isPushing = pushingTaskIdx === idx;
-
                     return (
                       <div
                         key={idx}
                         className={cn(
                           "flex items-start gap-2 p-2.5 border transition-all",
-                          isPushed
-                            ? "border-primary/30 bg-primary/5"
-                            : "border-border/50 hover:border-border"
+                          isPushed ? "border-primary/30 bg-primary/5" : "border-border/50 hover:border-border"
                         )}
                       >
                         <div className="flex-1 min-w-0">
@@ -496,19 +537,16 @@ export function SendPanel({
                                 {task.dueHint}
                               </span>
                             )}
-                            <span
-                              className={cn(
-                                "text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5",
-                                task.priority === "high" && "bg-destructive/10 text-destructive",
-                                task.priority === "medium" && "bg-amber-500/10 text-amber-600",
-                                task.priority === "low" && "bg-border/60 text-muted-foreground"
-                              )}
-                            >
+                            <span className={cn(
+                              "text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5",
+                              task.priority === "high"   && "bg-destructive/10 text-destructive",
+                              task.priority === "medium" && "bg-amber-500/10 text-amber-600",
+                              task.priority === "low"    && "bg-border/60 text-muted-foreground"
+                            )}>
                               {task.priority}
                             </span>
                           </div>
                         </div>
-
                         <button
                           onClick={() => pushTask(task, idx)}
                           disabled={isPushed || isPushing}
@@ -538,15 +576,17 @@ export function SendPanel({
   );
 }
 
-// ── Shared sub-components ───────────────────────────────────────────────────
+// ── Shared sub-components ─────────────────────────────────────────────────────
+
 function SectionHeader({
-  title, section, isOpen, onToggle, accent,
+  title, section, isOpen, onToggle, accent, icon,
 }: {
   title: string;
   section: Section;
   isOpen: boolean;
   onToggle: (s: Section) => void;
   accent?: boolean;
+  icon?: React.ReactNode;
 }) {
   return (
     <button
@@ -556,12 +596,15 @@ function SectionHeader({
         accent && "border-l-2 border-l-primary pl-3.5"
       )}
     >
-      <span className={cn(
-        "text-[10px] uppercase tracking-[0.12em] font-semibold",
-        accent ? "text-primary" : "text-muted-foreground/60"
-      )}>
-        {title}
-      </span>
+      <div className="flex items-center gap-1.5">
+        {icon && <span className="text-muted-foreground/40">{icon}</span>}
+        <span className={cn(
+          "text-[10px] uppercase tracking-[0.12em] font-semibold",
+          accent ? "text-primary" : "text-muted-foreground/60"
+        )}>
+          {title}
+        </span>
+      </div>
       {isOpen
         ? <ChevronUp className="w-3 h-3 text-muted-foreground/40" />
         : <ChevronDown className="w-3 h-3 text-muted-foreground/40" />
@@ -570,7 +613,13 @@ function SectionHeader({
   );
 }
 
-function SectionBody({ children }: { children: React.ReactNode }) {
+function SectionBody({
+  children,
+  noPadding = false,
+}: {
+  children: React.ReactNode;
+  noPadding?: boolean;
+}) {
   return (
     <motion.div
       initial={{ height: 0, opacity: 0 }}
@@ -579,7 +628,7 @@ function SectionBody({ children }: { children: React.ReactNode }) {
       transition={{ duration: 0.15 }}
       className="overflow-hidden"
     >
-      <div className="px-4 py-3 border-b border-border/30">
+      <div className={cn("border-b border-border/30", !noPadding && "px-4 py-3")}>
         {children}
       </div>
     </motion.div>

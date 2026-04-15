@@ -1,28 +1,68 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { FileText, Mic, AlignLeft, Users, FolderOpen, Search, Plus, Trash2 } from "lucide-react";
+import {
+  FileText, Mic, AlignLeft, Users, FolderOpen,
+  Search, Plus, Trash2, Quote, Lightbulb, ClipboardList, RefreshCw,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { deleteNoteAction } from "@/app/actions";
-import type { Note, NoteType } from "@/lib/db/notes";
+import type { Note, NoteType, NoteStatus } from "@/lib/db/notes";
 
-const TYPE_CONFIG: Record<NoteType | "notes", { label: string; icon: typeof FileText; color: string }> = {
-  "brief":          { label: "Edit Brief",     icon: FileText,   color: "text-primary" },
-  "meeting-notes":  { label: "Meeting Notes",  icon: Mic,        color: "text-amber-500" },
-  "project-notes":  { label: "Project Notes",  icon: AlignLeft,  color: "text-blue-500" },
-  "client-brief":   { label: "Client Brief",   icon: Users,      color: "text-purple-500" },
-  "notes":          { label: "Notes",          icon: AlignLeft,  color: "text-muted-foreground" },
+// ── Type config ───────────────────────────────────────────────────────────────
+
+const TYPE_CONFIG: Record<string, { label: string; icon: typeof FileText; color: string }> = {
+  "brief":          { label: "Edit Brief",     icon: FileText,     color: "text-primary" },
+  "meeting-notes":  { label: "Meeting Notes",  icon: Mic,          color: "text-amber-500" },
+  "project-notes":  { label: "Project Notes",  icon: AlignLeft,    color: "text-blue-500" },
+  "client-brief":   { label: "Client Brief",   icon: Users,        color: "text-purple-500" },
+  "notes":          { label: "Notes",          icon: AlignLeft,    color: "text-muted-foreground" },
+  "note":           { label: "Note",           icon: AlignLeft,    color: "text-muted-foreground" },
+  "quote":          { label: "Quote",          icon: Quote,        color: "text-green-500" },
+  "idea":           { label: "Idea",           icon: Lightbulb,    color: "text-yellow-500" },
+  "spec":           { label: "Spec",           icon: ClipboardList, color: "text-cyan-500" },
+  "project-update": { label: "Project Update", icon: RefreshCw,    color: "text-orange-500" },
 };
 
-type FilterType = NoteType | "all";
+// ── Status badge ─────────────────────────────────────────────────────────────
 
-interface Props {
-  notes: Note[];
-  selectedId: string | null;
-  onSelect: (note: Note) => void;
-  onNew: () => void;
-}
+const STATUS_STYLES: Record<NoteStatus, string> = {
+  draft: "text-muted-foreground/40",
+  saved: "text-blue-500/70",
+  sent:  "text-green-500/80",
+};
+const STATUS_LABELS: Record<NoteStatus, string> = {
+  draft: "draft",
+  saved: "saved",
+  sent:  "sent",
+};
+
+// ── Filter config ────────────────────────────────────────────────────────────
+
+type TypeFilter   = NoteType | "all";
+type StatusFilter = NoteStatus | "all";
+
+const TYPE_FILTERS: { key: TypeFilter; label: string }[] = [
+  { key: "all",            label: "All" },
+  { key: "brief",          label: "Briefs" },
+  { key: "meeting-notes",  label: "Meetings" },
+  { key: "project-notes",  label: "Projects" },
+  { key: "client-brief",   label: "Client" },
+  { key: "quote",          label: "Quotes" },
+  { key: "idea",           label: "Ideas" },
+  { key: "spec",           label: "Specs" },
+  { key: "project-update", label: "Updates" },
+];
+
+const STATUS_FILTERS: { key: StatusFilter; label: string }[] = [
+  { key: "all",   label: "All" },
+  { key: "draft", label: "Draft" },
+  { key: "saved", label: "Saved" },
+  { key: "sent",  label: "Sent" },
+];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -37,37 +77,115 @@ function timeAgo(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
-export function NotesListPanel({ notes, selectedId, onSelect, onNew }: Props) {
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<FilterType>("all");
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+// ── Props ─────────────────────────────────────────────────────────────────────
 
-  const filters: { key: FilterType; label: string }[] = [
-    { key: "all",           label: "All" },
-    { key: "brief",         label: "Briefs" },
-    { key: "meeting-notes", label: "Meetings" },
-    { key: "project-notes", label: "Projects" },
-    { key: "client-brief",  label: "Client" },
-  ];
+interface Props {
+  notes: Note[];
+  selectedId: string | null;
+  onSelect: (note: Note) => void;
+  onNew: () => void;
+  /** Called with updated list when server search returns results */
+  onSearchResults?: (notes: Note[]) => void;
+}
 
-  const filtered = notes.filter((n) => {
-    const matchesFilter = filter === "all" || n.type === filter;
-    const matchesSearch =
-      !search ||
-      n.title.toLowerCase().includes(search.toLowerCase()) ||
-      n.content?.toLowerCase().includes(search.toLowerCase());
-    return matchesFilter && matchesSearch;
-  });
+// ── Component ─────────────────────────────────────────────────────────────────
 
+export function NotesListPanel({ notes, selectedId, onSelect, onNew, onSearchResults }: Props) {
+  const [search,       setSearch]       = useState("");
+  const [typeFilter,   setTypeFilter]   = useState<TypeFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [deletingId,   setDeletingId]   = useState<string | null>(null);
+  const [isSearching,  setIsSearching]  = useState(false);
+  const [searchResults, setSearchResults] = useState<Note[] | null>(null); // null = show all
+
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Server-side search (debounced 300ms) ────────────────────────────────
+  const runSearch = useCallback(async (
+    q: string,
+    type: TypeFilter,
+    status: StatusFilter,
+  ) => {
+    const params = new URLSearchParams();
+    if (q)             params.set("q",      q);
+    if (type   !== "all") params.set("type",   type);
+    if (status !== "all") params.set("status", status);
+
+    setIsSearching(true);
+    try {
+      const res = await fetch(`/api/notes/search?${params.toString()}`);
+      if (!res.ok) throw new Error("Search failed");
+      const { notes: results } = await res.json() as { notes: Note[] };
+      setSearchResults(results);
+      onSearchResults?.(results);
+    } catch {
+      // Fall back to client-side filtering — don't show error to user
+      setSearchResults(null);
+    } finally {
+      setIsSearching(false);
+    }
+  }, [onSearchResults]);
+
+  function scheduleSearch(q: string, type: TypeFilter, status: StatusFilter) {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+
+    // If all filters are default, clear search results immediately
+    if (!q && type === "all" && status === "all") {
+      setSearchResults(null);
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    searchTimerRef.current = setTimeout(() => {
+      void runSearch(q, type, status);
+    }, 300);
+  }
+
+  function handleSearchChange(q: string) {
+    setSearch(q);
+    scheduleSearch(q, typeFilter, statusFilter);
+  }
+
+  function handleTypeFilter(type: TypeFilter) {
+    setTypeFilter(type);
+    scheduleSearch(search, type, statusFilter);
+  }
+
+  function handleStatusFilter(status: StatusFilter) {
+    setStatusFilter(status);
+    scheduleSearch(search, typeFilter, status);
+  }
+
+  // ── Determine which notes to display ────────────────────────────────────
+  // Use server results when available; otherwise fall back to client-side filter
+  const displayNotes = searchResults !== null
+    ? searchResults
+    : notes.filter((n) => {
+        const matchesType   = typeFilter   === "all" || n.type   === typeFilter;
+        const matchesStatus = statusFilter === "all" || n.status === statusFilter;
+        const matchesSearch = !search ||
+          n.title.toLowerCase().includes(search.toLowerCase()) ||
+          n.content?.toLowerCase().includes(search.toLowerCase());
+        return matchesType && matchesStatus && matchesSearch;
+      });
+
+  // ── Delete ───────────────────────────────────────────────────────────────
   async function handleDelete(e: React.MouseEvent, id: string) {
     e.stopPropagation();
     setDeletingId(id);
     try {
       await deleteNoteAction(id);
+      // Remove from local search results if present
+      if (searchResults !== null) {
+        setSearchResults((prev) => prev?.filter((n) => n.id !== id) ?? null);
+      }
     } finally {
       setDeletingId(null);
     }
   }
+
+  const hasActiveFilter = search || typeFilter !== "all" || statusFilter !== "all";
 
   return (
     <div className="w-full md:w-64 shrink-0 flex flex-col border-r border-border overflow-hidden">
@@ -88,27 +206,56 @@ export function NotesListPanel({ notes, selectedId, onSelect, onNew }: Props) {
       {/* Search */}
       <div className="px-3 py-2.5 border-b border-border/50 shrink-0">
         <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground/40" />
+          <Search className={cn(
+            "absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 transition-colors",
+            isSearching ? "text-primary animate-pulse" : "text-muted-foreground/40"
+          )} />
           <input
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search notes..."
+            onChange={(e) => handleSearchChange(e.target.value)}
+            placeholder="Search notes, projects, files…"
             className="w-full pl-7 pr-3 py-1.5 text-[11px] bg-transparent border border-border/60 text-foreground placeholder:text-muted-foreground/30 focus:outline-none focus:border-primary transition-colors"
           />
+          {search && (
+            <button
+              onClick={() => handleSearchChange("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground/30 hover:text-foreground transition-colors text-[10px]"
+            >
+              ✕
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Filter pills */}
-      <div className="flex gap-1 px-3 py-2 border-b border-border/50 overflow-x-auto shrink-0 scrollbar-none">
-        {filters.map((f) => (
+      {/* Type filter pills */}
+      <div className="flex gap-1 px-3 py-1.5 border-b border-border/50 overflow-x-auto shrink-0 scrollbar-none">
+        {TYPE_FILTERS.map((f) => (
           <button
             key={f.key}
-            onClick={() => setFilter(f.key)}
+            onClick={() => handleTypeFilter(f.key)}
             className={cn(
               "text-[10px] px-2 py-0.5 whitespace-nowrap font-medium transition-colors shrink-0",
-              filter === f.key
+              typeFilter === f.key
                 ? "bg-foreground text-background"
                 : "text-muted-foreground/40 hover:text-foreground hover:bg-accent/40"
+            )}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Status filter pills */}
+      <div className="flex gap-1 px-3 py-1.5 border-b border-border/30 overflow-x-auto shrink-0 scrollbar-none">
+        {STATUS_FILTERS.map((f) => (
+          <button
+            key={f.key}
+            onClick={() => handleStatusFilter(f.key)}
+            className={cn(
+              "text-[10px] px-2 py-0.5 whitespace-nowrap font-medium transition-colors shrink-0",
+              statusFilter === f.key
+                ? "bg-foreground/10 text-foreground border border-foreground/20"
+                : "text-muted-foreground/30 hover:text-foreground hover:bg-accent/30"
             )}
           >
             {f.label}
@@ -119,18 +266,23 @@ export function NotesListPanel({ notes, selectedId, onSelect, onNew }: Props) {
       {/* Notes list */}
       <div className="flex-1 overflow-auto">
         <AnimatePresence initial={false}>
-          {filtered.length === 0 ? (
+          {displayNotes.length === 0 ? (
             <div className="py-12 text-center px-4">
               <p className="text-xs text-muted-foreground/40">
-                {search ? "No notes match your search" : "No notes yet"}
+                {hasActiveFilter
+                  ? isSearching
+                    ? "Searching…"
+                    : "No notes match"
+                  : "No notes yet"}
               </p>
             </div>
           ) : (
-            filtered.map((note) => {
-              const config = TYPE_CONFIG[note.type] ?? TYPE_CONFIG["notes"];
-              const Icon = config.icon;
+            displayNotes.map((note) => {
+              const config  = TYPE_CONFIG[note.type] ?? TYPE_CONFIG["notes"];
+              const Icon    = config.icon;
               const isSelected = note.id === selectedId;
               const isDeleting = note.id === deletingId;
+              const status     = (note.status ?? "draft") as NoteStatus;
 
               return (
                 <motion.div
@@ -148,7 +300,7 @@ export function NotesListPanel({ notes, selectedId, onSelect, onNew }: Props) {
                       : "hover:bg-accent/20"
                   )}
                 >
-                  {/* Type + time */}
+                  {/* Type + time + status */}
                   <div className="flex items-center justify-between gap-2">
                     <div className={cn("flex items-center gap-1.5", config.color)}>
                       <Icon className="w-3 h-3 shrink-0" />
@@ -156,9 +308,19 @@ export function NotesListPanel({ notes, selectedId, onSelect, onNew }: Props) {
                         {config.label}
                       </span>
                     </div>
-                    <span className="text-[10px] text-muted-foreground/30 shrink-0">
-                      {timeAgo(note.updated_at)}
-                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {status !== "draft" && (
+                        <span className={cn(
+                          "text-[9px] uppercase tracking-wide font-semibold",
+                          STATUS_STYLES[status]
+                        )}>
+                          {STATUS_LABELS[status]}
+                        </span>
+                      )}
+                      <span className="text-[10px] text-muted-foreground/30">
+                        {timeAgo(note.updated_at)}
+                      </span>
+                    </div>
                   </div>
 
                   {/* Title */}

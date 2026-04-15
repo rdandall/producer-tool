@@ -6,14 +6,22 @@ import { Check, Edit3, Eye, Loader2, Mic, MicOff, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { renderSimpleMarkdownToHtml } from "@/lib/markdown";
 import { useLiveDictation } from "@/hooks/use-live-dictation";
+import type { NoteStatus } from "@/lib/db/notes";
+
+const STATUS_CONFIG: Record<NoteStatus, { label: string; className: string }> = {
+  draft: { label: "Draft",  className: "text-muted-foreground/40" },
+  saved: { label: "Saved",  className: "text-blue-500/70" },
+  sent:  { label: "Sent",   className: "text-green-500/80" },
+};
 
 interface Props {
   content: string;
   onChange: (content: string) => void;
   isSaving: boolean;
+  status?: NoteStatus;
 }
 
-export function DocumentEditor({ content, onChange, isSaving }: Props) {
+export function DocumentEditor({ content, onChange, isSaving, status = "draft" }: Props) {
   const [mode, setMode] = useState<"preview" | "edit">("preview");
   const [editValue, setEditValue] = useState(content);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -114,6 +122,15 @@ export function DocumentEditor({ content, onChange, isSaving }: Props) {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Status badge */}
+          {!isSaving && (
+            <span className={cn(
+              "text-[10px] uppercase tracking-wide font-semibold",
+              STATUS_CONFIG[status]?.className ?? STATUS_CONFIG.draft.className
+            )}>
+              {STATUS_CONFIG[status]?.label ?? "Draft"}
+            </span>
+          )}
           {isSaving && (
             <span className="text-[10px] text-muted-foreground/40">Saving…</span>
           )}

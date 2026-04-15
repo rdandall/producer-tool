@@ -9,7 +9,7 @@ import { DictationPanel } from "@/components/notes/dictation-panel";
 import { DocumentEditor } from "@/components/notes/document-editor";
 import { SendPanel } from "@/components/notes/send-panel";
 import { createNoteAction, updateNoteAction } from "@/app/actions";
-import type { Note, NoteType, NoteLink, ExtractedTask } from "@/lib/db/notes";
+import type { Note, NoteType, NoteLink, ExtractedTask, NoteAttachment } from "@/lib/db/notes";
 
 interface Project {
   id: string;
@@ -37,6 +37,7 @@ export function MobileNotes({ initialNotes, projects, defaultDocType = "brief" }
   const [currentLinks, setCurrentLinks] = useState<NoteLink[]>([]);
   const [currentExtractedTasks, setCurrentExtractedTasks] = useState<ExtractedTask[]>([]);
   const [currentNoteId, setCurrentNoteId] = useState<string | null>(null);
+  const [currentAttachments, setCurrentAttachments] = useState<NoteAttachment[]>([]);
 
   function handleNew() {
     setSelectedNote(null);
@@ -251,6 +252,8 @@ export function MobileNotes({ initialNotes, projects, defaultDocType = "brief" }
           onLinksChange={setCurrentLinks}
           projects={projects}
           selectedProjectId={selectedProjectId}
+          attachments={currentAttachments}
+          onAttachmentsChange={setCurrentAttachments}
         />
       </div>
     </div>

@@ -203,7 +203,7 @@ export async function deletePhaseAction(phaseId: string) {
 
 // ── Note actions ──────────────────────────────────────────────────────────
 
-import type { NoteType, NoteLink, ExtractedTask } from "@/lib/db/notes";
+import type { NoteType, NoteStatus, NoteLink, ExtractedTask, VersionTrigger } from "@/lib/db/notes";
 
 export async function createNoteAction(fields: {
   title?: string;
@@ -211,6 +211,7 @@ export async function createNoteAction(fields: {
   raw_input?: string;
   content?: string;
   project_id?: string | null;
+  status?: NoteStatus;
 }): Promise<string> {
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -221,6 +222,7 @@ export async function createNoteAction(fields: {
       raw_input:  fields.raw_input  ?? "",
       content:    fields.content    ?? null,
       project_id: fields.project_id ?? null,
+      status:     fields.status     ?? "draft",
     })
     .select("id")
     .single();
@@ -240,6 +242,8 @@ export async function updateNoteAction(
     project_id?: string | null;
     links?: NoteLink[];
     extracted_tasks?: ExtractedTask[];
+    status?: NoteStatus;
+    last_output_type?: "email" | "pdf" | "docx" | null;
   }
 ) {
   const supabase = await createClient();
@@ -256,6 +260,47 @@ export async function deleteNoteAction(noteId: string) {
   const { error } = await supabase.from("notes").delete().eq("id", noteId);
   if (error) throw new Error(error.message);
   revalidatePath("/dashboard", "layout");
+}
+
+/** Create a snapshot of the note at a given point in time (save / send / export). */
+export async function createNoteVersionAction(
+  noteId: string,
+  title: string,
+  content: string,
+  trigger: VersionTrigger
+) {
+  const supabase = await createClient();
+  const { error } = await supabase.from("note_versions").insert({
+    note_id: noteId,
+    title,
+    content,
+    trigger,
+  });
+  if (error) console.error("createNoteVersionAction:", error.message);
+  // Non-fatal — never throw, just log
+}
+
+/** Update the attachment role for a given attachment. */
+export async function updateAttachmentRoleAction(
+  attachmentId: string,
+  role: "context" | "delivery" | "both"
+) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("note_attachments")
+    .update({ role })
+    .eq("id", attachmentId);
+  if (error) throw new Error(error.message);
+}
+
+/** Delete an attachment record from DB (caller must also remove from Storage). */
+export async function deleteAttachmentAction(attachmentId: string) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("note_attachments")
+    .delete()
+    .eq("id", attachmentId);
+  if (error) throw new Error(error.message);
 }
 
 // ── Email task suggestion actions ──────────────────────────────────────────────
@@ -399,7 +444,10 @@ export async function setEmailSyncLimitAction(limit: number): Promise<void> {
 
 /** Set the default document type for new notes. */
 export async function setNoteDefaultTypeAction(type: string): Promise<void> {
-  const validTypes = ["brief", "meeting-notes", "project-notes", "client-brief"];
+  const validTypes = [
+    "brief", "meeting-notes", "project-notes", "client-brief",
+    "notes", "note", "quote", "idea", "spec", "project-update",
+  ];
   if (!validTypes.includes(type)) throw new Error("Invalid document type");
   await setSetting("note_default_type", type);
   revalidatePath("/dashboard/settings");
