@@ -9,7 +9,7 @@ import { DictationPanel } from "@/components/notes/dictation-panel";
 import { DocumentEditor } from "@/components/notes/document-editor";
 import { SendPanel } from "@/components/notes/send-panel";
 import { createNoteAction, updateNoteAction } from "@/app/actions";
-import type { Note, NoteType, NoteLink, ExtractedTask, NoteAttachment } from "@/lib/db/notes";
+import type { Note, NoteType, NoteLink, ExtractedTask, NoteAttachment } from "@/lib/db/notes-types";
 
 interface Project {
   id: string;

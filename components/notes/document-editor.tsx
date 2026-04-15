@@ -6,7 +6,7 @@ import { Check, Edit3, Eye, Loader2, Mic, MicOff, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { renderSimpleMarkdownToHtml } from "@/lib/markdown";
 import { useLiveDictation } from "@/hooks/use-live-dictation";
-import type { NoteStatus } from "@/lib/db/notes";
+import type { NoteStatus } from "@/lib/db/notes-types";
 
 const STATUS_CONFIG: Record<NoteStatus, { label: string; className: string }> = {
   draft: { label: "Draft",  className: "text-muted-foreground/40" },

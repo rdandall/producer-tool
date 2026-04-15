@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { deleteNoteAction } from "@/app/actions";
-import type { Note, NoteType, NoteStatus } from "@/lib/db/notes";
+import type { Note, NoteType, NoteStatus } from "@/lib/db/notes-types";
 
 // ── Type config ───────────────────────────────────────────────────────────────
 

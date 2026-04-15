@@ -9,7 +9,7 @@ import {
 import { cn } from "@/lib/utils";
 import { createTaskAction } from "@/app/actions";
 import { toast } from "sonner";
-import type { NoteLink, ExtractedTask, NoteAttachment, NoteStatus } from "@/lib/db/notes";
+import type { NoteLink, ExtractedTask, NoteAttachment, NoteStatus } from "@/lib/db/notes-types";
 import { ContactAutocomplete, type Contact } from "./contact-autocomplete";
 import { useLiveDictation } from "@/hooks/use-live-dictation";
 import { AttachmentsSection } from "./attachments-section";

@@ -10,7 +10,7 @@ import { DictationPanel } from "./dictation-panel";
 import { DocumentEditor } from "./document-editor";
 import { SendPanel } from "./send-panel";
 import { createNoteAction, updateNoteAction, createNoteVersionAction } from "@/app/actions";
-import type { Note, NoteType, NoteLink, ExtractedTask, NoteAttachment, NoteStatus } from "@/lib/db/notes";
+import type { Note, NoteType, NoteLink, ExtractedTask, NoteAttachment, NoteStatus } from "@/lib/db/notes-types";
 
 interface Project {
   id: string;

@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Mic, Sparkles, Trash2, ChevronDown, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import type { NoteType } from "@/lib/db/notes";
+import type { NoteType } from "@/lib/db/notes-types";
 
 const TYPE_OPTIONS: { value: NoteType; label: string; description: string }[] = [
   { value: "brief",          label: "Edit Brief",     description: "Instructions for your editor" },

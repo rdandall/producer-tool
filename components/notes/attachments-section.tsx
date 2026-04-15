@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { formatBytes, isImageMime, isVideoMime, type NoteAttachment, type AttachmentRole } from "@/lib/db/notes";
+import { formatBytes, isImageMime, isVideoMime, type NoteAttachment, type AttachmentRole } from "@/lib/db/notes-types";
 
 // ── Role chip ─────────────────────────────────────────────────────────────────
 
