@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import {
   LayoutDashboard,
+  LayoutPanelTop,
   FolderKanban,
   CheckSquare,
   CalendarDays,
@@ -18,13 +19,14 @@ import { ThemeToggle } from "@/components/layout/theme-toggle";
 
 const tabs = [
   { label: "Home", href: "/dashboard", icon: LayoutDashboard },
-  { label: "Tasks", href: "/dashboard/tasks", icon: CheckSquare },
+  { label: "The Desk", href: "/dashboard/desk", icon: LayoutPanelTop },
   { label: "Email", href: "/dashboard/email", icon: Mail },
   { label: "Calendar", href: "/dashboard/calendar", icon: CalendarDays },
   { label: "More", href: "#more", icon: MoreHorizontal },
 ];
 
 const moreItems = [
+  { label: "Tasks", href: "/dashboard/tasks", icon: CheckSquare },
   { label: "Projects", href: "/dashboard/projects", icon: FolderKanban },
   { label: "Notes & Briefs", href: "/dashboard/notes", icon: FileText },
   { label: "Clients", href: "/dashboard/clients", icon: FolderKanban },

@@ -58,6 +58,9 @@ self.addEventListener("activate", (event) => {
 
 // ─── FETCH STRATEGIES ───────────────────────────────────
 self.addEventListener("fetch", (event) => {
+  // Development bundles reuse their URLs. Never serve stale code on localhost,
+  // including for browsers still controlled by an earlier worker registration.
+  if (["localhost", "127.0.0.1", "[::1]"].includes(self.location.hostname)) return;
   const { request } = event;
   const url = new URL(request.url);
 
