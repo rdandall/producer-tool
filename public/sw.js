@@ -64,6 +64,9 @@ self.addEventListener("fetch", (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
+  // Cloud desk state must never be replayed from the offline response cache.
+  if (url.pathname === "/api/desk") return;
+
   // Skip non-GET requests
   if (request.method !== "GET") return;
 

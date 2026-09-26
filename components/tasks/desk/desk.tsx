@@ -7,9 +7,8 @@ import { useTheme } from "next-themes";
 import { stepFloat } from "./float-physics";
 import styles from "./desk-surface.module.css";
 
-type Zone = "desk" | "waiting" | "later" | "done" | "pending" | "deleted";
-type ChecklistItem = { id: string; text: string; done: boolean };
-type Card = { notes?: string; dueDate?: string; checklist?: ChecklistItem[]; link?: string; id: string; title: string; project: string; detail: string; color: string; zone: Zone; x: number; y: number; remaining?: number; arranged?: boolean };
+import type { Card, Zone } from "@/lib/desk/state";
+import { useDeskSync } from "./use-desk-sync";
 type Destination = "done" | "pending" | "later" | "waiting";
 type SpeechSession = { start: () => void; stop: () => void; abort: () => void; continuous: boolean; interimResults: boolean; lang: string; onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }>; resultIndex: number }) => void) | null; onerror: ((event: { error: string }) => void) | null; onend: (() => void) | null };
 const initialCards: Card[] = [
@@ -90,6 +89,16 @@ export function Desk({ embedded = false, projects = [] }: { embedded?: boolean; 
     if (!ready) return;
     try { localStorage.setItem(`${storageKey}-preferences`, JSON.stringify({ placement, movement })); } catch { /* Session-only fallback. */ }
   }, [placement, movement, ready, storageKey]);
+
+  const syncStatus = useDeskSync(embedded, ready, { cards, preferences: { cardSize, placement, movement } }, (remote) => {
+    setCards((previous) => remote.cards.map((card) => {
+      const current = previous.find((item) => item.id === card.id);
+      return current?.zone === "pending" && card.zone === "desk" ? { ...card, zone: "pending", remaining: current.remaining } : card;
+    }));
+    setCardSize(remote.preferences.cardSize);
+    setPlacement(remote.preferences.placement);
+    setMovement(remote.preferences.movement);
+  });
 
   useEffect(() => {
     const observer = new ResizeObserver(([entry]) => setSize({ width: entry.contentRect.width, height: entry.contentRect.height }));
@@ -200,7 +209,7 @@ export function Desk({ embedded = false, projects = [] }: { embedded?: boolean; 
     <main className={`${styles.shell} ${embedded ? styles.embedded : ""}`}>
       <header className={styles.nav}>
         <a href={embedded ? "/dashboard/desk" : "/dashboard"} className={styles.brand}>{embedded ? "THE DESK" : "PRDCR"}{!embedded && <span>THE DESK</span>}</a>
-        <span className={styles.previewBadge}>{embedded ? "YOUR PERSONAL WORKSPACE" : "DESIGN PLAYGROUND"}<span> · {embedded ? "Saved in this browser" : "Sample tasks only"}</span></span>
+        <span className={styles.previewBadge}>{embedded ? "YOUR PERSONAL WORKSPACE" : "DESIGN PLAYGROUND"}<span> · {embedded ? syncStatus : "Sample tasks only"}</span></span>
         <div className={styles.navActions}>
           <span className={styles.progress}><i />{done.length ? `${done.length} finished` : "A fresh start"}</span>
           <button title="Switch light and dark" aria-label="Switch light and dark" onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}>{ready && resolvedTheme === "dark" ? <Sun size={17} /> : <Moon size={17} />}</button>
@@ -259,7 +268,7 @@ export function Desk({ embedded = false, projects = [] }: { embedded?: boolean; 
       </div>
       <footer className={styles.footer}>
         <span role="status" aria-live="polite">{notice}</span>
-        <div><span>{embedded ? "Saved in this browser" : "Sample tasks only"}</span><button onClick={() => setDrawer("deleted")}>Recently discarded{deleted.length ? ` · ${deleted.length}` : ""}</button>{!embedded && <button onClick={() => { recognition.current?.abort(); setRecording(false); setText(""); setCards(initialCards.map((c) => ({ ...c }))); setPaused([]); setNotice("Sample desk reset. Try something different."); }}><RotateCcw size={12} />Reset demo</button>}</div>
+        <div><span>{embedded ? syncStatus : "Sample tasks only"}</span><button onClick={() => setDrawer("deleted")}>Recently discarded{deleted.length ? ` · ${deleted.length}` : ""}</button>{!embedded && <button onClick={() => { recognition.current?.abort(); setRecording(false); setText(""); setCards(initialCards.map((c) => ({ ...c }))); setPaused([]); setNotice("Sample desk reset. Try something different."); }}><RotateCcw size={12} />Reset demo</button>}</div>
       </footer>
 
       {settingsOpen && <DeskDialog label="Desk settings" placement="side" onClose={() => setSettingsOpen(false)}>
@@ -267,9 +276,9 @@ export function Desk({ embedded = false, projects = [] }: { embedded?: boolean; 
         <fieldset className={styles.settingGroup}><legend>Card size</legend><div className={styles.segment}>{(["compact", "large"] as const).map((value) => <button key={value} aria-pressed={cardSize === value} onClick={() => setCardSize(value)}>{value === "compact" ? "Compact" : "Large"}</button>)}</div></fieldset>
         <fieldset className={styles.settingGroup}><legend>Open cards</legend><div className={styles.segment}>{(["side", "center"] as const).map((value) => <button key={value} aria-pressed={placement === value} onClick={() => setPlacement(value)}>{value === "side" ? "On the side" : "In the middle"}</button>)}</div><p>Click a card to see its notes, links, and next steps.</p></fieldset>
         <fieldset className={styles.settingGroup}><legend>Movement</legend><div className={styles.segment}>{(["studio", "float"] as const).map((value) => <button key={value} aria-pressed={movement === value} onClick={() => setMovement(value)}>{value === "studio" ? "Studio" : "Float"}</button>)}</div><p>{movement === "studio" ? "A short, controlled glide. Gentle attraction to destinations." : "Flick cards into the edges and let them bounce. Grab to stop, or use Settle desk."}</p>{reduced && <p>Your device’s reduced-motion preference keeps movement gentle.</p>}</fieldset>
-        <div className={styles.previewNote}>{embedded ? "Your desk saves in this browser, on this device. It is separate from the original Tasks list. No email suggestions or existing tasks are imported." : "This desk is a separate playground. No email suggestions or existing tasks are imported."}</div>
+        <div className={styles.previewNote}>{embedded ? "Cards, notes, checklists, and desk preferences save across devices. A local copy protects your work while offline. This desk stays separate from the original Tasks list and email suggestions." : "This desk is a separate playground. No email suggestions or existing tasks are imported."}</div>
       </DeskDialog>}
-      {selected && <CardDetails key={selected.id} projects={embedded ? projects : initialCards.map((card) => ({ title: card.project, color: card.color }))} preview={!embedded} card={selected} placement={placement} onClose={() => setSelectedId(null)} onChange={(changes) => patchCard(selected.id, changes)} onMove={(zone) => { move(selected.id, zone); setSelectedId(null); }} />}
+      {selected && <CardDetails key={selected.id} projects={embedded ? projects : initialCards.map((card) => ({ title: card.project, color: card.color }))} preview={!embedded} syncStatus={syncStatus} card={selected} placement={placement} onClose={() => setSelectedId(null)} onChange={(changes) => patchCard(selected.id, changes)} onMove={(zone) => { move(selected.id, zone); setSelectedId(null); }} />}
 
       {help && <section className={styles.guide} role="dialog" aria-label="Your desk, explained" onKeyDown={(event) => { if (event.key === "Escape") closeHelp(); }}>
         <button ref={helpClose} className={styles.close} aria-label="Close desk guide" onClick={closeHelp}><X size={18} /></button>
@@ -307,7 +316,7 @@ function DeskDialog({ label, placement, onClose, children }: { label: string; pl
   </dialog>;
 }
 
-function CardDetails({ card, placement, onClose, onChange, onMove, preview, projects }: { projects: Array<{ title: string; color: string }>; preview: boolean; card: Card; placement: "side" | "center"; onClose: () => void; onChange: (changes: Partial<Card>) => void; onMove: (zone: Zone) => void }) {
+function CardDetails({ card, placement, onClose, onChange, onMove, preview, projects, syncStatus }: { syncStatus: string; projects: Array<{ title: string; color: string }>; preview: boolean; card: Card; placement: "side" | "center"; onClose: () => void; onChange: (changes: Partial<Card>) => void; onMove: (zone: Zone) => void }) {
   const [step, setStep] = useState("");
   const [linkError, setLinkError] = useState("");
   const checklist = card.checklist ?? [];
@@ -321,7 +330,7 @@ function CardDetails({ card, placement, onClose, onChange, onMove, preview, proj
   return <DeskDialog label="Task details" placement={placement} onClose={onClose}>
     <p className={styles.eyebrow}>A LITTLE ROOM TO WORK</p>
     <label className={styles.fieldLabel}>Task<textarea className={styles.detailTitle} aria-label="Task title" value={card.title} rows={2} onChange={(event) => onChange({ title: event.target.value })} onBlur={() => { if (!card.title.trim()) onChange({ title: "Untitled task" }); }} /></label>
-    <p className={styles.savedNote}>Saved in this browser{preview ? " · Preview task" : ""}</p>
+    <p className={styles.savedNote}>{preview ? "Saved in this browser · Preview task" : syncStatus}</p>
     <div className={styles.detailMeta}>
       <label className={styles.fieldLabel}>Project<select aria-label="Task project" value={card.project} onChange={(event) => { const project = projects.find((c) => c.title === event.target.value); onChange({ project: event.target.value, color: project?.color ?? "#69a68b" }); }}>{[...new Set(["PERSONAL", ...projects.map((c) => c.title), card.project])].map((project) => <option key={project}>{project}</option>)}</select></label>
       <label className={styles.fieldLabel}>Deadline<input type="date" aria-label="Task deadline" value={card.dueDate ?? ""} onChange={(event) => onChange({ dueDate: event.target.value, detail: event.target.value ? `Due ${event.target.value}` : "No deadline" })} /></label>
